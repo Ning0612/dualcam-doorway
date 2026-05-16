@@ -8,6 +8,8 @@ public:
 
   SystemState getState() const { return _state; }
 
+  void setEventCallback(StateEventCallback cb) { _callback = cb; }
+
   void onIndoorFaceDetected();
   void onOutdoorFaceDetected();
   void onDoorOpened();
@@ -19,8 +21,9 @@ public:
   void tick();
 
 private:
-  SystemState   _state;
-  unsigned long _stateEnteredAt;
+  SystemState        _state;
+  unsigned long      _stateEnteredAt;
+  StateEventCallback _callback;
 
   void _transitionTo(SystemState next);
 };

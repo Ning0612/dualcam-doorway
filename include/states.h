@@ -26,3 +26,11 @@ inline const char* stateToString(SystemState s) {
     default:                            return "UNKNOWN";
   }
 }
+
+struct StateEvent {
+  SystemState   from;
+  SystemState   to;
+  unsigned long timestamp;
+};
+
+typedef void (*StateEventCallback)(const StateEvent&);

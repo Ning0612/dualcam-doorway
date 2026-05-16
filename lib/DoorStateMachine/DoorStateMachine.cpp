@@ -2,11 +2,16 @@
 #include "config.h"
 
 DoorStateMachine::DoorStateMachine()
-  : _state(SystemState::IDLE), _stateEnteredAt(0) {}
+  : _state(SystemState::IDLE), _stateEnteredAt(0), _callback(nullptr) {}
 
 void DoorStateMachine::_transitionTo(SystemState next) {
-  _state = next;
-  _stateEnteredAt = millis();
+  SystemState from = _state;
+  _state           = next;
+  _stateEnteredAt  = millis();
+  if (_callback) {
+    StateEvent ev = { from, next, millis() };
+    _callback(ev);
+  }
 }
 
 void DoorStateMachine::onIndoorFaceDetected() {
@@ -58,7 +63,6 @@ void DoorStateMachine::tick() {
       if (elapsed >= FACE_RECENT_MS) _transitionTo(SystemState::IDLE);
       break;
     case SystemState::LEAVING_HOME:
-      // Guard against lost door-close event
       if (elapsed >= DOOR_TRANSITION_MS) _transitionTo(SystemState::HOME_EMPTY);
       break;
     case SystemState::ENTERING_HOME:
