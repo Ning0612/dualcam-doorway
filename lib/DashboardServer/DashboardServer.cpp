@@ -145,6 +145,11 @@ void DashboardServer::begin(WebServer& server,
     server.send(302, "text/plain", "");
   });
 
+  // Suppress browser auto-request log noise
+  server.on("/favicon.ico", HTTP_GET, [&server]() {
+    server.send(204, "text/plain", "");
+  });
+
   // ── Dashboard page ──────────────────────────────────────────────────────────
   server.on("/dashboard", HTTP_GET, [&server]() {
     if (!requireAuthAndChangedPassword(server)) return;

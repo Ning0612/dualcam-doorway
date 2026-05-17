@@ -4,19 +4,124 @@
 #include <Preferences.h>
 #include "config.h"
 
+// Append a JSON-safe escaped string (handles quote, backslash, control chars)
+static void appendEscapedJson(String& out, const String& s) {
+  for (size_t i = 0; i < s.length(); i++) {
+    char c = s[i];
+    if      (c == '"')  { out += "\\\""; }
+    else if (c == '\\') { out += "\\\\"; }
+    else if (c < 0x20)  { char buf[7]; snprintf(buf, sizeof(buf), "\\u%04x", (uint8_t)c); out += buf; }
+    else                { out += c; }
+  }
+}
+
+// Scan nearby networks, deduplicate by SSID (keep strongest RSSI), sort descending.
+// Returns JSON array string (max MAX_SCAN_RESULTS entries), or "" on hardware error.
+// Results are cached for SCAN_CACHE_MS to throttle repeated calls.
+static String scanNetworksJson() {
+  static const int           MAX_RAW          = 64;
+  static const int           MAX_SCAN_RESULTS = 15;
+  static const unsigned long SCAN_CACHE_MS    = 10000;
+  static String              s_cached;
+  static unsigned long       s_cachedAt       = 0;
+
+  unsigned long now = millis();
+  if (s_cachedAt > 0 && (now - s_cachedAt) < SCAN_CACHE_MS) {
+    return s_cached;
+  }
+
+  int n = WiFi.scanNetworks(false, false);
+  if (n < 0) {
+    Serial.printf("[ConfigPortal] Scan error: %d\n", n);
+    WiFi.scanDelete();
+    return "";  // caller sends HTTP 500
+  }
+  if (n > MAX_RAW) n = MAX_RAW;
+
+  // Deduplicate: for each SSID keep the index with strongest RSSI
+  int idx[MAX_RAW];
+  int cnt = 0;
+  for (int i = 0; i < n; i++) {
+    String ssid = WiFi.SSID(i);
+    if (ssid.length() == 0) continue;  // skip hidden networks
+    bool dup = false;
+    for (int j = 0; j < cnt; j++) {
+      if (WiFi.SSID(idx[j]) == ssid) {
+        if (WiFi.RSSI(i) > WiFi.RSSI(idx[j])) idx[j] = i;
+        dup = true;
+        break;
+      }
+    }
+    if (!dup) idx[cnt++] = i;
+  }
+
+  // Insertion sort descending by RSSI
+  for (int i = 1; i < cnt; i++) {
+    int key = idx[i], j = i - 1;
+    while (j >= 0 && WiFi.RSSI(idx[j]) < WiFi.RSSI(key)) {
+      idx[j + 1] = idx[j];
+      j--;
+    }
+    idx[j + 1] = key;
+  }
+
+  if (cnt > MAX_SCAN_RESULTS) cnt = MAX_SCAN_RESULTS;
+  Serial.printf("[ConfigPortal] Scan complete: %d network(s) found.\n", cnt);
+
+  String json = "[";
+  for (int i = 0; i < cnt; i++) {
+    if (i > 0) json += ",";
+    json += "{\"s\":\"";
+    appendEscapedJson(json, WiFi.SSID(idx[i]));
+    json += "\",\"r\":";
+    json += String(WiFi.RSSI(idx[i]));
+    json += "}";
+  }
+  json += "]";
+
+  WiFi.scanDelete();
+  s_cached   = json;
+  s_cachedAt = now;
+  return json;
+}
+
 static const char PORTAL_HTML[] =
   "<!DOCTYPE html><html><head>"
   "<meta charset='utf-8'><title>DualCam Setup</title>"
-  "<style>body{font-family:sans-serif;max-width:400px;margin:40px auto;padding:20px}"
-  "input{width:100%;padding:8px;margin:8px 0;box-sizing:border-box}"
-  "button{width:100%;padding:10px;background:#0070f3;color:#fff;border:none;cursor:pointer}"
+  "<style>"
+  "body{font-family:sans-serif;max-width:400px;margin:40px auto;padding:20px}"
+  "input,select{width:100%;padding:8px;margin:6px 0;box-sizing:border-box}"
+  "button{width:100%;padding:10px;margin:4px 0;background:#0070f3;color:#fff;border:none;cursor:pointer}"
+  ".sb{background:#555}label{display:block;margin-top:8px;font-size:.9em;color:#444}"
   "</style></head><body>"
   "<h2>DualCam Wi-Fi Setup</h2>"
+  "<button class='sb' type='button' onclick='doScan()'>Scan Networks</button>"
+  "<select id='nets' onchange='pick(this.value)'>"
+  "<option value=''>-- select network --</option></select>"
   "<form method='POST' action='/save'>"
-  "<label>Wi-Fi SSID<br><input name='ssid' maxlength='32' required></label>"
-  "<label>Password<br><input type='password' name='pw' maxlength='64'></label>"
+  "<label>SSID<input id='s' name='ssid' maxlength='32' required placeholder='Network name'></label>"
+  "<label>Password<input type='password' name='pw' maxlength='64' placeholder='Wi-Fi password'></label>"
   "<button>Save &amp; Restart</button>"
-  "</form></body></html>";
+  "</form>"
+  "<p id='msg' style='font-size:.85em;color:#666'></p>"
+  "<script>"
+  "function pick(v){if(v)document.getElementById('s').value=v;}"
+  "function doScan(){"
+  "var m=document.getElementById('msg');"
+  "m.textContent='Scanning...';"
+  "fetch('/scan').then(function(r){"
+  "if(!r.ok){m.textContent='Scan failed ('+r.status+'). Please try again.';return null;}"
+  "return r.json();}).then(function(d){"
+  "if(!d)return;"
+  "var sel=document.getElementById('nets');"
+  "sel.innerHTML='<option value=\"\">-- select network --</option>';"
+  "d.forEach(function(n){"
+  "var o=document.createElement('option');"
+  "o.value=n.s;o.textContent=n.s+' ('+n.r+' dBm)';"
+  "sel.appendChild(o);});"
+  "m.textContent=d.length+' network(s) found.';}"
+  ").catch(function(){m.textContent='Scan failed. Please try again.';});}"
+  "</script></body></html>";
 
 static const char SAVED_HTML[] =
   "<html><body><h2>Saved! Restarting in 2 seconds...</h2></body></html>";
@@ -50,7 +155,8 @@ void ConfigPortal::begin(const char* apName,
 bool ConfigPortal::_tryConnect(const String& ssid, const String& pw,
                                  IPAddress local, IPAddress gw, IPAddress sub) {
   WiFi.mode(WIFI_STA);
-  if (!WiFi.config(local, gw, sub)) {
+  // Use gateway as DNS — home routers typically forward DNS queries
+  if (!WiFi.config(local, gw, sub, gw)) {
     Serial.println("[ConfigPortal] ERROR: WiFi.config() failed; cannot assign static IP.");
     return false;
   }
@@ -65,7 +171,8 @@ bool ConfigPortal::_tryConnect(const String& ssid, const String& pw,
 }
 
 void ConfigPortal::_runPortal(const char* apName) {
-  WiFi.mode(WIFI_AP);
+  // WIFI_AP_STA allows STA scan while AP is active
+  WiFi.mode(WIFI_AP_STA);
   if (!WiFi.softAP(apName, "dualcam99")) {
     Serial.println("[ConfigPortal] ERROR: softAP() failed.");
     return;
@@ -78,6 +185,16 @@ void ConfigPortal::_runPortal(const char* apName) {
 
   portalServer.on("/", HTTP_GET, [&portalServer]() {
     portalServer.send(200, "text/html", PORTAL_HTML);
+  });
+
+  portalServer.on("/scan", HTTP_GET, [&portalServer]() {
+    String json = scanNetworksJson();
+    if (json.length() == 0) {
+      portalServer.send(500, "application/json", "{\"error\":\"scan failed\"}");
+      return;
+    }
+    portalServer.sendHeader("Cache-Control", "no-cache");
+    portalServer.send(200, "application/json", json);
   });
 
   bool saved = false;

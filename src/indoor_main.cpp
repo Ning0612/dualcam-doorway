@@ -35,6 +35,8 @@ static void onStateEvent(const StateEvent& ev) {
     if (url.length() > 0) {
       String msg = String("[DualCam Indoor] ") + stateToString(ev.to);
       DiscordNotifier::notify(url, ev.to, msg);
+    } else {
+      Serial.println("[Indoor] WARNING: Discord URL not configured; skipping notification.");
     }
   }
 }
@@ -46,13 +48,25 @@ static void handleSerialInput() {
   char c = Serial.read();
   if (c == 'f') {
     Serial.println("[Indoor] face detected (simulated)");
+    SystemState before = sm.getState();
     sm.onIndoorFaceDetected();
+    if (sm.getState() == before)
+      Serial.printf("[Indoor] HINT: ignored -- need IDLE or HOME_OCCUPIED (current: %s)\n",
+                    stateToString(before));
   } else if (c == 'u') {
     Serial.println("[Indoor] unknown visitor (simulated)");
+    SystemState before = sm.getState();
     sm.onUnknownVisitor();
+    if (sm.getState() == before)
+      Serial.printf("[Indoor] HINT: ignored -- need IDLE or PREPARE_TO_ENTER (current: %s)\n",
+                    stateToString(before));
   } else if (c == 'a') {
     Serial.println("[Indoor] alert triggered (simulated)");
+    SystemState before = sm.getState();
     sm.onAlert();
+    if (sm.getState() == before)
+      Serial.printf("[Indoor] HINT: ignored -- need UNKNOWN_VISITOR (current: %s). Press 'u' first.\n",
+                    stateToString(before));
   }
 }
 
@@ -97,7 +111,7 @@ static void updateActuators() {
 void setup() {
   Serial.begin(115200);
   Serial.println("[Indoor] boot");
-  Serial.println("[Indoor] WARNING: Dashboard HTTP only — LAN use only, not internet-safe.");
+  Serial.println("[Indoor] WARNING: Dashboard HTTP only -- LAN use only, not internet-safe.");
 
   pinMode(PIN_LED,    OUTPUT);
   pinMode(PIN_BUZZER, OUTPUT);
@@ -110,7 +124,7 @@ void setup() {
   doorStable = doorRaw;
   doorOpen   = doorRaw;
 
-  // 2a: ConfigPortal — blocks until WiFi STA is connected
+  // 2a: ConfigPortal -- blocks until WiFi STA is connected
   IPAddress localIp, gateway, subnet;
   localIp.fromString(IP_INDOOR);
   gateway.fromString(IP_GATEWAY);
@@ -130,7 +144,7 @@ void setup() {
 
   server.begin();
   Serial.printf("[Indoor] HTTP server on port %d\n", HTTP_PORT);
-  Serial.println("[Indoor] ready — keys: f=face, u=unknown, a=alert");
+  Serial.println("[Indoor] ready -- keys: f=face, u=unknown, a=alert");
 }
 
 void loop() {
