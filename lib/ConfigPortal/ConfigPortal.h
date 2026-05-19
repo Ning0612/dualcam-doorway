@@ -11,6 +11,10 @@ public:
   static void begin(const char* apName,
                     IPAddress localIp, IPAddress gateway, IPAddress subnet);
 
+  // Erase wifi_ssid and wifi_pw from NVS. Returns true on success.
+  // Call before ESP.restart() to force the next boot into AP portal mode.
+  static bool clearCredentials();
+
 private:
   static bool _tryConnect(const String& ssid, const String& pw,
                            IPAddress local, IPAddress gw, IPAddress sub);

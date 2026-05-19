@@ -2,6 +2,7 @@
 #include "DoorStateMachine.h"
 #include "SessionAuth.h"
 #include "SettingsStore.h"
+#include "config.h"
 #include "states.h"
 #include <ArduinoJson.h>
 
@@ -13,11 +14,14 @@ static const char DASHBOARD_HTML[] =
   "<style>body{font-family:sans-serif;max-width:600px;margin:20px auto;padding:20px}"
   ".card{background:#f5f5f5;border-radius:8px;padding:16px;margin:12px 0}"
   ".st{font-size:1.4em;font-weight:bold}.lbl{color:#666;font-size:.85em}"
-  "a{color:#0070f3}nav{margin-bottom:16px}</style></head><body>"
+  "a{color:#0070f3}nav{margin-bottom:16px}"
+  ".hidden{display:none}</style></head><body>"
   "<h2>DualCam &mdash; %AGENT%</h2>"
   "<nav><a href='/settings'>Settings</a> | <a href='/logout'>Logout</a></nav>"
   "<div class='card'><div class='lbl'>State</div><div class='st' id='st'>&mdash;</div></div>"
   "<div class='card'><div class='lbl'>Door</div><div id='door'>&mdash;</div></div>"
+  "<div id='hall_card' class='card hidden'>"
+  "<div class='lbl'>Hall Sensor</div><div id='hall'>&mdash;</div></div>"
   "<div class='card'><div class='lbl'>Peer</div><div id='peer'>&mdash;</div></div>"
   "<div class='card'><div class='lbl'>Uptime</div><div id='up'>&mdash;</div></div>"
   "<script>"
@@ -29,6 +33,10 @@ static const char DASHBOARD_HTML[] =
   "document.getElementById('peer').textContent="
   "d.peer_online?(d.peer_state||'?'):'offline';"
   "document.getElementById('up').textContent=fmt(d.uptime||0);"
+  "if(d.hall_raw!==undefined){"
+  "document.getElementById('hall_card').classList.remove('hidden');"
+  "document.getElementById('hall').textContent="
+  "'raw: '+d.hall_raw+' / threshold: '+d.hall_threshold;}"
   "}).catch(()=>{}); }"
   "poll();setInterval(poll,3000);"
   "</script></body></html>";
@@ -58,6 +66,7 @@ static const char SETTINGS_HTML[] =
   "<input name='discord_url' maxlength='256' "
   "placeholder='https://discord.com/api/webhooks/...' value='%DISCORD_URL%'></label>"
   "</fieldset>"
+  "%HALL_FIELD%"
   "<button>Save</button>"
   "</form></body></html>";
 
@@ -85,7 +94,9 @@ static const char PWCHANGE_HTML[] =
 static DoorStateMachine* _sm          = nullptr;
 static const char*       _agentLabel  = nullptr;
 static PeerStatus*       _cachedPeer  = nullptr;
-static bool*             _doorOpen    = nullptr;
+static bool*             _doorOpen      = nullptr;
+static uint16_t*         _hallRaw       = nullptr;
+static uint16_t*         _hallThreshold = nullptr;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -133,11 +144,15 @@ void DashboardServer::begin(WebServer& server,
                              DoorStateMachine& sm,
                              const char* agentLabel,
                              PeerStatus* cachedPeer,
-                             bool* doorOpen) {
-  _sm         = &sm;
-  _agentLabel = agentLabel;
-  _cachedPeer = cachedPeer;
-  _doorOpen   = doorOpen;
+                             bool* doorOpen,
+                             uint16_t* hallRaw,
+                             uint16_t* hallThreshold) {
+  _sm            = &sm;
+  _agentLabel    = agentLabel;
+  _cachedPeer    = cachedPeer;
+  _doorOpen      = doorOpen;
+  _hallRaw       = hallRaw;
+  _hallThreshold = hallThreshold;
 
   // Root → dashboard
   server.on("/", HTTP_GET, [&server]() {
@@ -175,6 +190,11 @@ void DashboardServer::begin(WebServer& server,
       doc["peer_state"]  = "unknown";
     }
 
+    if (_hallRaw) {
+      doc["hall_raw"]       = *_hallRaw;
+      doc["hall_threshold"] = SettingsStore::getHallThreshold();
+    }
+
     String json;
     serializeJson(doc, json);
     server.send(200, "application/json", json);
@@ -187,6 +207,18 @@ void DashboardServer::begin(WebServer& server,
     page.replace("%MSG%", "");
     page.replace("%CSRF%", SessionAuth::getCsrfToken());
     page.replace("%DISCORD_URL%", htmlAttrEscape(SettingsStore::getDiscordUrl()));
+    if (_hallRaw) {
+      String hf = "<fieldset><legend>Hall Sensor Threshold</legend>"
+                  "<label>Threshold (0-4095)<br>"
+                  "<input type='number' name='hall_threshold' min='0' max='4095' value='";
+      hf += SettingsStore::getHallThreshold();
+      hf += "'></label><p style='font-size:.8em;color:#666'>"
+            "Current raw: " + String(*_hallRaw) + " &mdash; "
+            "set between closed and open readings.</p></fieldset>";
+      page.replace("%HALL_FIELD%", hf);
+    } else {
+      page.replace("%HALL_FIELD%", "");
+    }
     server.send(200, "text/html", page);
   });
 
@@ -225,10 +257,44 @@ void DashboardServer::begin(WebServer& server,
       }
     }
 
+    // Hall threshold (indoor only) — validate before saving
+    if (_hallRaw && server.hasArg("hall_threshold")) {
+      String hallArg = server.arg("hall_threshold");
+      bool numeric = hallArg.length() > 0;
+      for (size_t i = 0; i < hallArg.length() && numeric; i++) {
+        if (!isdigit((unsigned char)hallArg[i])) numeric = false;
+      }
+      if (!numeric) {
+        msg += "<p class='err'>Hall threshold must be a number.</p>";
+      } else {
+        int val = hallArg.toInt();
+        if (!SettingsStore::setHallThreshold((uint16_t)val)) {
+          msg += "<p class='err'>Hall threshold must be between " +
+                 String(HALL_HYSTERESIS + 1) + " and " +
+                 String(4095 - HALL_HYSTERESIS) + ".</p>";
+        } else {
+          if (_hallThreshold) *_hallThreshold = (uint16_t)val;  // update runtime value immediately
+          msg += "<p class='ok'>Hall threshold saved.</p>";
+        }
+      }
+    }
+
     String page = SETTINGS_HTML;
     page.replace("%MSG%",        msg);
     page.replace("%CSRF%",       SessionAuth::getCsrfToken());
     page.replace("%DISCORD_URL%", htmlAttrEscape(SettingsStore::getDiscordUrl()));
+    if (_hallRaw) {
+      String hf = "<fieldset><legend>Hall Sensor Threshold</legend>"
+                  "<label>Threshold (0-4095)<br>"
+                  "<input type='number' name='hall_threshold' min='0' max='4095' value='";
+      hf += SettingsStore::getHallThreshold();
+      hf += "'></label><p style='font-size:.8em;color:#666'>"
+            "Current raw: " + String(*_hallRaw) + " &mdash; "
+            "set between closed and open readings.</p></fieldset>";
+      page.replace("%HALL_FIELD%", hf);
+    } else {
+      page.replace("%HALL_FIELD%", "");
+    }
     server.send(200, "text/html", page);
   });
 

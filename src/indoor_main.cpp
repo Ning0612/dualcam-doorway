@@ -11,6 +11,7 @@
 #include "AgentProtocol.h"
 #include "DashboardServer.h"
 #include "DiscordNotifier.h"
+#include "CameraAgent.h"
 
 // ── Globals ───────────────────────────────────────────────────────────────────
 
@@ -18,11 +19,38 @@ WebServer        server(HTTP_PORT);
 DoorStateMachine sm;
 PeerStatus       cachedPeer = {false, SystemState::IDLE, 0};
 
-static bool          doorOpen      = false;
-static bool          doorStable    = false;
-static bool          doorRaw       = false;
-static unsigned long doorChangeMs  = 0;
-static unsigned long lastPeerQuery = 0;
+static bool          doorOpen         = false;
+static uint16_t      hallRaw          = 0;
+static uint16_t      hallThreshold    = HALL_DEFAULT_THRESHOLD;
+static unsigned long lastHallMs       = 0;
+static unsigned long lastPeerQuery    = 0;
+
+// Debounce state for Hall sensor transitions
+static bool          doorPendingActive = false;
+static bool          doorPendingState  = false;
+static unsigned long doorPendingMs     = 0;
+
+static unsigned long wifiLostMs = 0;
+
+// ── WiFi loss monitoring ──────────────────────────────────────────────────────
+// Resets on any successful reconnect. If WiFi flaps briefly but recovers, the
+// 5-min timer resets intentionally — a device that can reconnect should stay up.
+// Only a continuous 5-min blackout triggers a restart into portal mode.
+
+static void handleWifiLoss() {
+  if (WiFi.status() != WL_CONNECTED) {
+    if (wifiLostMs == 0) {
+      wifiLostMs = millis();
+      Serial.println("[Indoor] WiFi disconnected, monitoring for recovery.");
+    } else if (millis() - wifiLostMs >= WIFI_LOST_TIMEOUT_MS) {
+      Serial.println("[Indoor] WiFi lost too long — restarting to config portal.");
+      ESP.restart();
+    }
+  } else {
+    if (wifiLostMs != 0) Serial.println("[Indoor] WiFi reconnected.");
+    wifiLostMs = 0;
+  }
+}
 
 // ── State event callback ──────────────────────────────────────────────────────
 
@@ -41,54 +69,105 @@ static void onStateEvent(const StateEvent& ev) {
   }
 }
 
+// ── Hall-effect door sensor ───────────────────────────────────────────────────
+//
+// Reads 8 samples and averages to reduce ADC noise.
+// State transitions use hysteresis to prevent rapid toggling near the threshold:
+//   hallRaw < (threshold - HALL_HYSTERESIS)  → door OPEN
+//   hallRaw > (threshold + HALL_HYSTERESIS)  → door CLOSED
+//   otherwise                                → dead zone, keep current state
+//
+// Calibration:
+//   - Serial 'h': print current raw value and threshold
+//   - Serial 'H': save current raw value as new threshold
+
+static void handleDoorSensor() {
+  if (millis() - lastHallMs < HALL_SAMPLE_INTERVAL_MS) return;
+  lastHallMs = millis();
+
+  uint32_t sum = 0;
+  for (int i = 0; i < 8; i++) sum += analogRead(PIN_HALL);
+  hallRaw = (uint16_t)(sum >> 3);
+
+  // Hysteresis: determine if we're clearly in OPEN or CLOSED territory
+  bool shouldBeOpen;
+  if      (hallRaw < (uint16_t)(hallThreshold - HALL_HYSTERESIS))
+    shouldBeOpen = true;
+  else if (hallRaw > (uint16_t)(hallThreshold + HALL_HYSTERESIS))
+    shouldBeOpen = false;
+  else {
+    // Dead zone — clear any pending debounce and keep current state
+    doorPendingActive = false;
+    return;
+  }
+
+  if (shouldBeOpen == doorOpen) {
+    doorPendingActive = false;  // already in correct state
+    return;
+  }
+
+  // Debounce: require stable new state for DOOR_DEBOUNCE_MS before firing
+  if (!doorPendingActive || doorPendingState != shouldBeOpen) {
+    doorPendingActive = true;
+    doorPendingState  = shouldBeOpen;
+    doorPendingMs     = millis();
+    return;
+  }
+
+  if (millis() - doorPendingMs < DOOR_DEBOUNCE_MS) return;
+
+  // Debounce period elapsed — commit transition
+  doorPendingActive = false;
+  doorOpen          = shouldBeOpen;
+  if (doorOpen) {
+    Serial.println("[Indoor] door opened");
+    sm.onDoorOpened();
+  } else {
+    Serial.println("[Indoor] door closed");
+    sm.onDoorClosed();
+  }
+}
+
 // ── Input handling ────────────────────────────────────────────────────────────
 
 static void handleSerialInput() {
   if (!Serial.available()) return;
   char c = Serial.read();
-  if (c == 'f') {
-    Serial.println("[Indoor] face detected (simulated)");
-    SystemState before = sm.getState();
-    sm.onIndoorFaceDetected();
-    if (sm.getState() == before)
-      Serial.printf("[Indoor] HINT: ignored -- need IDLE or HOME_OCCUPIED (current: %s)\n",
-                    stateToString(before));
+
+  if (c == 'h') {
+    Serial.printf("[Indoor] Hall raw=%u  threshold=%u  hysteresis=±%d  door=%s\n",
+                  hallRaw, hallThreshold, HALL_HYSTERESIS,
+                  doorOpen ? "OPEN" : "CLOSED");
+  } else if (c == 'H') {
+    if (!SettingsStore::setHallThreshold(hallRaw)) {
+      Serial.printf("[Indoor] Hall threshold rejected: %u is outside valid range [%d, %d]\n",
+                    hallRaw, HALL_HYSTERESIS + 1, 4095 - HALL_HYSTERESIS);
+    } else {
+      hallThreshold = hallRaw;
+      Serial.printf("[Indoor] Hall threshold saved: %u (NVS updated)\n", hallThreshold);
+    }
   } else if (c == 'u') {
-    Serial.println("[Indoor] unknown visitor (simulated)");
+    Serial.println("[Indoor] unknown visitor (manual override)");
     SystemState before = sm.getState();
     sm.onUnknownVisitor();
     if (sm.getState() == before)
       Serial.printf("[Indoor] HINT: ignored -- need IDLE or PREPARE_TO_ENTER (current: %s)\n",
                     stateToString(before));
   } else if (c == 'a') {
-    Serial.println("[Indoor] alert triggered (simulated)");
+    Serial.println("[Indoor] alert triggered (manual override)");
     SystemState before = sm.getState();
     sm.onAlert();
     if (sm.getState() == before)
       Serial.printf("[Indoor] HINT: ignored -- need UNKNOWN_VISITOR (current: %s). Press 'u' first.\n",
                     stateToString(before));
-  }
-}
-
-static void handleDoorSensor() {
-  bool         current = (digitalRead(PIN_DOOR) == LOW);  // active-LOW with external pull-up
-  unsigned long now    = millis();
-
-  if (current != doorRaw) {
-    doorRaw      = current;
-    doorChangeMs = now;
-  }
-
-  if ((now - doorChangeMs >= DOOR_DEBOUNCE_MS) && (doorRaw != doorStable)) {
-    doorStable = doorRaw;
-    doorOpen   = doorStable;
-    if (doorStable) {
-      Serial.println("[Indoor] door opened");
-      sm.onDoorOpened();
-    } else {
-      Serial.println("[Indoor] door closed");
-      sm.onDoorClosed();
-    }
+  } else if (c == 'c') {
+    Serial.printf("[Indoor] camera: init=%s lastDet=%lums\n",
+                  CameraAgent::isInitialized() ? "OK" : "FAIL",
+                  CameraAgent::lastDetectedMs());
+  } else if (c == 'W') {
+    Serial.println("[Indoor] Clearing WiFi credentials and restarting...");
+    if (ConfigPortal::clearCredentials()) ESP.restart();
+    else Serial.println("[Indoor] Clear failed — NOT restarting.");
   }
 }
 
@@ -115,40 +194,70 @@ void setup() {
 
   pinMode(PIN_LED,    OUTPUT);
   pinMode(PIN_BUZZER, OUTPUT);
-  pinMode(PIN_DOOR,   INPUT);  // GPIO 34: input-only, external 10kΩ pull-up required
+  // PIN_HALL (GPIO 33) is analog input — no pinMode needed.
+  // Set full-range attenuation: 0-3.3V maps to 0-4095.
+  analogSetPinAttenuation(PIN_HALL, ADC_11db);
   digitalWrite(PIN_LED,    LOW);
   digitalWrite(PIN_BUZZER, LOW);
 
-  // Sync initial door state to avoid spurious event on first loop
-  doorRaw    = (digitalRead(PIN_DOOR) == LOW);
-  doorStable = doorRaw;
-  doorOpen   = doorRaw;
-
-  // 2a: ConfigPortal -- blocks until WiFi STA is connected
+  // 2a: ConfigPortal — blocks until WiFi STA is connected
   IPAddress localIp, gateway, subnet;
   localIp.fromString(IP_INDOOR);
   gateway.fromString(IP_GATEWAY);
   subnet.fromString(IP_SUBNET);
   ConfigPortal::begin("DualCam-Indoor-Setup", localIp, gateway, subnet);
 
-  Serial.printf("[Indoor] WiFi connected. IP: %s\n", WiFi.localIP().toString().c_str());
+  Serial.printf("[Indoor] WiFi connected. IP: %s  MAC: %s\n",
+                WiFi.localIP().toString().c_str(),
+                WiFi.macAddress().c_str());
 
   // 2c-2d: Settings, Auth, HTTP routes
   SettingsStore::init();
+  hallThreshold = SettingsStore::getHallThreshold();
+  Serial.printf("[Indoor] Hall threshold loaded: %u\n", hallThreshold);
+
   SessionAuth::begin(server);
   AgentProtocol::registerRoutes(server, sm, "Indoor");
-  DashboardServer::begin(server, sm, "Indoor", &cachedPeer, &doorOpen);
+  DashboardServer::begin(server, sm, "Indoor", &cachedPeer, &doorOpen, &hallRaw, &hallThreshold);
 
-  // 2e (hook): state event triggers Discord on UNKNOWN_VISITOR / ALERT_MODE
+  // 2e: state event triggers Discord on UNKNOWN_VISITOR / ALERT_MODE
   sm.setEventCallback(onStateEvent);
+
+  // Sync initial door state from Hall sensor before server starts
+  {
+    uint32_t sum = 0;
+    for (int i = 0; i < 8; i++) sum += analogRead(PIN_HALL);
+    hallRaw  = (uint16_t)(sum >> 3);
+    doorOpen = (hallRaw < hallThreshold);
+    Serial.printf("[Indoor] Hall initial: raw=%u threshold=%u door=%s\n",
+                  hallRaw, hallThreshold, doorOpen ? "OPEN" : "CLOSED");
+  }
 
   server.begin();
   Serial.printf("[Indoor] HTTP server on port %d\n", HTTP_PORT);
-  Serial.println("[Indoor] ready -- keys: f=face, u=unknown, a=alert");
+
+  // Phase 4: camera init runs in a background task so loop() is never blocked.
+  // esp_camera_init() can stall on I2C if the module is absent or mis-wired;
+  // running it off the main core keeps the HTTP server responsive regardless.
+  xTaskCreate([](void*) {
+    if (!CameraAgent::begin()) {
+      Serial.println("[Indoor] WARNING: camera init failed — face detection unavailable");
+    } else {
+      CameraAgent::startStreamServer();  // MJPEG on port 81
+    }
+    vTaskDelete(nullptr);
+  }, "cam_init", 8192, nullptr, 1, nullptr);
+
+  Serial.println("[Indoor] ready");
+  Serial.println("[Indoor]   h = show Hall value/threshold");
+  Serial.println("[Indoor]   H = save current reading as threshold");
+  Serial.println("[Indoor]   u = unknown visitor  a = alert  c = camera status");
+  Serial.println("[Indoor]   W = clear WiFi credentials and restart to config portal");
 }
 
 void loop() {
   server.handleClient();
+  CameraAgent::handleStreamClients();
 
   // 2b: Peer query every PEER_QUERY_INTERVAL_MS
   if (millis() - lastPeerQuery >= PEER_QUERY_INTERVAL_MS) {
@@ -156,6 +265,13 @@ void loop() {
     lastPeerQuery = millis();
   }
 
+  // Phase 4: feed camera detection into state machine (edge-triggered in tick())
+  FaceResult face = CameraAgent::tick();
+  if (face == FaceResult::DETECTED) {
+    sm.onIndoorFaceDetected();
+  }
+
+  handleWifiLoss();
   handleSerialInput();
   handleDoorSensor();
   sm.tick();

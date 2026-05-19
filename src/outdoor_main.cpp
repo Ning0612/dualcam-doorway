@@ -11,6 +11,7 @@
 #include "AgentProtocol.h"
 #include "DashboardServer.h"
 #include "DiscordNotifier.h"
+#include "CameraAgent.h"
 
 // ── Globals ───────────────────────────────────────────────────────────────────
 
@@ -21,6 +22,28 @@ PeerStatus       cachedPeer = {false, SystemState::IDLE, 0};
 static unsigned long lastPeerQuery = 0;
 static unsigned long lastBlinkMs   = 0;
 static bool          ledState      = false;
+
+static unsigned long wifiLostMs = 0;
+
+// ── WiFi loss monitoring ──────────────────────────────────────────────────────
+// Resets on any successful reconnect. If WiFi flaps briefly but recovers, the
+// 5-min timer resets intentionally — a device that can reconnect should stay up.
+// Only a continuous 5-min blackout triggers a restart into portal mode.
+
+static void handleWifiLoss() {
+  if (WiFi.status() != WL_CONNECTED) {
+    if (wifiLostMs == 0) {
+      wifiLostMs = millis();
+      Serial.println("[Outdoor] WiFi disconnected, monitoring for recovery.");
+    } else if (millis() - wifiLostMs >= WIFI_LOST_TIMEOUT_MS) {
+      Serial.println("[Outdoor] WiFi lost too long — restarting to config portal.");
+      ESP.restart();
+    }
+  } else {
+    if (wifiLostMs != 0) Serial.println("[Outdoor] WiFi reconnected.");
+    wifiLostMs = 0;
+  }
+}
 
 // ── State event callback ──────────────────────────────────────────────────────
 
@@ -42,15 +65,21 @@ static void onStateEvent(const StateEvent& ev) {
 static void handleSerialInput() {
   if (!Serial.available()) return;
   char c = Serial.read();
-  if (c == 'f') {
-    Serial.println("[Outdoor] face detected (simulated)");
-    sm.onOutdoorFaceDetected();
-  } else if (c == 'u') {
-    Serial.println("[Outdoor] unknown visitor (simulated)");
+  // Manual overrides for testing (camera provides real events in normal operation)
+  if (c == 'u') {
+    Serial.println("[Outdoor] unknown visitor (manual override)");
     sm.onUnknownVisitor();
   } else if (c == 'a') {
-    Serial.println("[Outdoor] alert triggered (simulated)");
+    Serial.println("[Outdoor] alert triggered (manual override)");
     sm.onAlert();
+  } else if (c == 'c') {
+    Serial.printf("[Outdoor] camera: init=%s lastDet=%lums\n",
+                  CameraAgent::isInitialized() ? "OK" : "FAIL",
+                  CameraAgent::lastDetectedMs());
+  } else if (c == 'W') {
+    Serial.println("[Outdoor] Clearing WiFi credentials and restarting...");
+    if (ConfigPortal::clearCredentials()) ESP.restart();
+    else Serial.println("[Outdoor] Clear failed — NOT restarting.");
   }
 }
 
@@ -114,11 +143,23 @@ void setup() {
 
   server.begin();
   Serial.printf("[Outdoor] HTTP server on port %d\n", HTTP_PORT);
-  Serial.println("[Outdoor] ready — keys: f=face, u=unknown, a=alert");
+
+  // Phase 4: camera init in background task — keeps loop() unblocked
+  xTaskCreate([](void*) {
+    if (!CameraAgent::begin()) {
+      Serial.println("[Outdoor] WARNING: camera init failed — face detection unavailable");
+    } else {
+      CameraAgent::startStreamServer();  // MJPEG on port 81
+    }
+    vTaskDelete(nullptr);
+  }, "cam_init", 8192, nullptr, 1, nullptr);
+
+  Serial.println("[Outdoor] ready — keys: u=unknown, a=alert, c=camera status, W=clear WiFi");
 }
 
 void loop() {
   server.handleClient();
+  CameraAgent::handleStreamClients();
 
   // 2b: Peer query every PEER_QUERY_INTERVAL_MS
   if (millis() - lastPeerQuery >= PEER_QUERY_INTERVAL_MS) {
@@ -126,6 +167,14 @@ void loop() {
     lastPeerQuery = millis();
   }
 
+  // Phase 4: feed camera detection into state machine
+  // Outdoor agent: detected face from camera = outdoor face event
+  FaceResult face = CameraAgent::tick();
+  if (face == FaceResult::DETECTED) {
+    sm.onOutdoorFaceDetected();
+  }
+
+  handleWifiLoss();
   handleSerialInput();
   sm.tick();
   updateActuators();

@@ -31,7 +31,11 @@ bool DiscordNotifier::notify(const String& webhookUrl, SystemState forState,
   String masked = (webhookUrl.length() >= 8)
     ? "..." + webhookUrl.substring(webhookUrl.length() - 8)
     : "...";
-  Serial.printf("[Discord] Sending to %s\n", masked.c_str());
+  Serial.printf("[Discord] Sending to %s  IP: %s  DNS: %s / %s\n",
+                masked.c_str(),
+                WiFi.localIP().toString().c_str(),
+                WiFi.dnsIP(0).toString().c_str(),
+                WiFi.dnsIP(1).toString().c_str());
 
   // ── Build JSON payload ──────────────────────────────────────────────────────
   JsonDocument doc;

@@ -1,12 +1,14 @@
 #include "SettingsStore.h"
+#include "config.h"
 #include <Preferences.h>
 #include <mbedtls/sha256.h>
 
-static const char* NVS_NS   = "agent_cfg";
-static const char* PW_HASH  = "dashboard_pw";
-static const char* PW_CHGD  = "pw_changed";
-static const char* DISC_URL = "discord_url";
-static const char* SALT     = "dualcam_s2024";
+static const char* NVS_NS    = "agent_cfg";
+static const char* PW_HASH   = "dashboard_pw";
+static const char* PW_CHGD   = "pw_changed";
+static const char* DISC_URL  = "discord_url";
+static const char* HALL_KEY  = "hall_thresh";
+static const char* SALT      = "dualcam_s2024";
 
 void SettingsStore::init() {
   // NVS namespace is created lazily on first write; nothing to do here.
@@ -98,6 +100,28 @@ String SettingsStore::hashPassword(const String& pw) {
   for (int i = 0; i < 32; i++) sprintf(buf + i * 2, "%02x", hash[i]);
   buf[64] = '\0';
   return String(buf);
+}
+
+uint16_t SettingsStore::getHallThreshold() {
+  Preferences prefs;
+  prefs.begin(NVS_NS, true);
+  uint16_t v = (uint16_t)prefs.getUInt(HALL_KEY, HALL_DEFAULT_THRESHOLD);
+  prefs.end();
+  return v;
+}
+
+bool SettingsStore::setHallThreshold(uint16_t value) {
+  // Reject values where hysteresis window would reach ADC rail (0 or 4095).
+  // Valid range: [HALL_HYSTERESIS+1, 4095-HALL_HYSTERESIS-1] ≈ [151, 3944].
+  if (value <= HALL_HYSTERESIS || value >= (uint16_t)(4096 - HALL_HYSTERESIS)) return false;
+  Preferences prefs;
+  if (!prefs.begin(NVS_NS, false)) {
+    Serial.println("[SettingsStore] ERROR: NVS begin() failed.");
+    return false;
+  }
+  bool ok = prefs.putUInt(HALL_KEY, value) > 0;
+  prefs.end();
+  return ok;
 }
 
 bool SettingsStore::_isValidDiscordUrl(const String& url) {

@@ -1,11 +1,18 @@
 #pragma once
 
-// Shared pin assignments (both agents)
-// NOTE: GPIO 32 is camera PWDN on many ESP32-CAM boards.
-// For Phase 1 (no camera), this is safe. Revisit in Phase 4.
-#define PIN_LED    33   // OUTPUT
-#define PIN_BUZZER 32   // OUTPUT
+// Shared pin assignments
+// GPIO 32 is camera PWDN — not available for general use.
+#define PIN_BUZZER  13  // OUTPUT
 
-// Indoor-only — GPIO 34 is input-only on ESP32 and does NOT support internal pull-up.
-// Requires external 10kΩ pull-up to 3.3V. Door closed = HIGH, door open = LOW.
-#define PIN_DOOR   34
+// GPIO 0 is CAM_XCLK on NMK99 — cannot be used as a general-purpose button.
+// WiFi reset is handled via Serial 'W' command instead of a hardware button.
+
+#ifdef INDOOR_AGENT
+  // GPIO 33 (ADC1_CH5) is used for the Hall-effect door sensor.
+  // ADC1 works with WiFi active; ADC2 does not.
+  // GPIO 33 freed by moving LED to GPIO 4 (repurposed from flash LED).
+  #define PIN_LED   4
+  #define PIN_HALL  33  // analog INPUT, ADC1_CHANNEL_5
+#else
+  #define PIN_LED   33  // OUTPUT
+#endif

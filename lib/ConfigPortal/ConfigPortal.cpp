@@ -32,6 +32,13 @@ static String scanNetworksJson() {
 
   int n = WiFi.scanNetworks(false, false);
   if (n < 0) {
+    // One retry after a short settle delay (radio may be temporarily busy)
+    Serial.printf("[ConfigPortal] Scan returned %d, retrying...\n", n);
+    WiFi.scanDelete();
+    delay(300);
+    n = WiFi.scanNetworks(false, false);
+  }
+  if (n < 0) {
     Serial.printf("[ConfigPortal] Scan error: %d\n", n);
     WiFi.scanDelete();
     return "";  // caller sends HTTP 500
@@ -126,6 +133,21 @@ static const char PORTAL_HTML[] =
 static const char SAVED_HTML[] =
   "<html><body><h2>Saved! Restarting in 2 seconds...</h2></body></html>";
 
+bool ConfigPortal::clearCredentials() {
+  Preferences prefs;
+  if (!prefs.begin("agent_cfg", false)) {
+    Serial.println("[ConfigPortal] ERROR: NVS open failed; credentials NOT cleared.");
+    return false;
+  }
+  // Remove both keys unconditionally — don't short-circuit.
+  // A key that doesn't exist is not an error (already cleared or first boot).
+  prefs.remove("wifi_ssid");
+  prefs.remove("wifi_pw");
+  prefs.end();
+  Serial.println("[ConfigPortal] WiFi credentials cleared from NVS.");
+  return true;
+}
+
 void ConfigPortal::begin(const char* apName,
                           IPAddress localIp, IPAddress gateway, IPAddress subnet) {
   Preferences prefs;
@@ -154,9 +176,19 @@ void ConfigPortal::begin(const char* apName,
 
 bool ConfigPortal::_tryConnect(const String& ssid, const String& pw,
                                  IPAddress local, IPAddress gw, IPAddress sub) {
+  // Prevent ESP32 from saving credentials to its own internal flash;
+  // we manage them exclusively via Preferences (NVS namespace "agent_cfg").
+  WiFi.persistent(false);
+  // disconnect(wifioff=true, eraseap=true): turn off WiFi AND erase any credentials
+  // previously stored in the ESP32's own NVS (separate from our "agent_cfg" namespace).
+  WiFi.disconnect(true, true);
+  delay(400);  // allow WiFi driver to fully reset before switching mode
   WiFi.mode(WIFI_STA);
-  // Use gateway as DNS — home routers typically forward DNS queries
-  if (!WiFi.config(local, gw, sub, gw)) {
+  delay(100);
+
+  // Primary DNS = gateway (home router forwards DNS queries).
+  // Secondary DNS = 8.8.8.8 as fallback if gateway DNS is unresponsive.
+  if (!WiFi.config(local, gw, sub, gw, IPAddress(8, 8, 8, 8))) {
     Serial.println("[ConfigPortal] ERROR: WiFi.config() failed; cannot assign static IP.");
     return false;
   }
@@ -167,6 +199,17 @@ bool ConfigPortal::_tryConnect(const String& ssid, const String& pw,
     if (millis() - start >= WIFI_CONNECT_TIMEOUT_MS) return false;
     delay(100);
   }
+
+  WiFi.setAutoReconnect(true);
+  // Static IP devices skip DHCP; gratuitous ARP is the only announcement the router
+  // gets. Allow lwIP time to complete it before any outbound traffic is attempted.
+  delay(500);
+
+  Serial.printf("[ConfigPortal] IP: %s  GW: %s  DNS0: %s  DNS1: %s\n",
+                WiFi.localIP().toString().c_str(),
+                WiFi.gatewayIP().toString().c_str(),
+                WiFi.dnsIP(0).toString().c_str(),
+                WiFi.dnsIP(1).toString().c_str());
   return true;
 }
 
