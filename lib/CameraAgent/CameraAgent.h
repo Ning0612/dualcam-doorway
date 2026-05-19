@@ -3,7 +3,10 @@
 #include <WiFiServer.h>
 #include <WiFiClient.h>
 
-enum class FaceResult { NONE, DETECTED, CAMERA_ERROR };
+enum class FaceResult { NONE, DETECTED, KNOWN, UNKNOWN, CAMERA_ERROR };
+// DETECTED : face found, no enrolled faces to compare against (Phase 4 compat)
+// KNOWN    : face matches an enrolled identity
+// UNKNOWN  : face detected but does not match any enrolled identity
 
 class CameraAgent {
 public:
@@ -13,6 +16,12 @@ public:
   // Call every loop(); internally rate-limited to CAMERA_DETECT_INTERVAL_MS.
   // Returns DETECTED only on the first tick where a face appears (edge trigger).
   static FaceResult tick();
+
+  // Flag the next detected face for enrollment instead of recognition.
+  // Enrollment is automatically cancelled after CAMERA_ENROLL_TIMEOUT_MS if no face appears.
+  // Safe to call from loop() or a route handler (core-1 only).
+  static void scheduleEnroll();
+  static void cancelEnroll();
 
   // Starts MJPEG stream server on port 81 via a dedicated FreeRTOS task.
   // Call once in setup() after begin(). The task runs independently of loop().
@@ -35,6 +44,8 @@ private:
   static WiFiServer*   _streamSrv;
   static TaskHandle_t  _streamTask;
 
+  static bool          _enrollNext;
+  static unsigned long _enrollExpireMs;
   static FaceResult _runDetection();
   static void       _streamTaskFn(void* arg);
 };

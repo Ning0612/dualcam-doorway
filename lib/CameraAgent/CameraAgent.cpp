@@ -1,4 +1,5 @@
 #include "CameraAgent.h"
+#include "FaceRecognizer.h"
 #include "config.h"
 #include "esp_camera.h"
 #include "img_converters.h"
@@ -26,6 +27,8 @@
 // ── Statics ───────────────────────────────────────────────────────────────────
 bool          CameraAgent::_ok         = false;
 bool          CameraAgent::_hasPsram   = false;
+bool          CameraAgent::_enrollNext      = false;
+unsigned long CameraAgent::_enrollExpireMs  = 0;
 unsigned long CameraAgent::_lastDetMs  = 0;
 unsigned long CameraAgent::_nextDetMs  = 0;
 FaceResult    CameraAgent::_prevResult = FaceResult::NONE;
@@ -91,7 +94,7 @@ bool CameraAgent::begin() {
 
   sensor_t* s = esp_camera_sensor_get();
   if (s) {
-    s->set_vflip(s, 1);
+    s->set_vflip(s, 0);
     s->set_hmirror(s, 0);
     s->set_brightness(s, 1);
     s->set_saturation(s, 0);
@@ -121,72 +124,117 @@ static inline bool isSkin(uint8_t cb, uint8_t cr) {
 FaceResult CameraAgent::_runDetection() {
   if (!_ok || !_hasPsram) return FaceResult::NONE;
 
+  // Cancel stale enroll request so an unattended camera doesn't enroll a passer-by
+  if (_enrollNext && millis() > _enrollExpireMs) {
+    _enrollNext = false;
+    Serial.println("[Camera] enroll cancelled: no face detected within timeout");
+  }
+
   camera_fb_t* fb = esp_camera_fb_get();
   if (!fb) {
     Serial.println("[Camera] frame capture failed");
     return FaceResult::CAMERA_ERROR;
   }
 
-  if (fb->format != PIXFORMAT_YUV422 || fb->width == 0 || fb->height == 0) {
+  if (fb->format != PIXFORMAT_YUV422 || fb->width == 0 || fb->height == 0
+      || !fb->buf || fb->len < (size_t)fb->width * (size_t)fb->height * 2U) {
     esp_camera_fb_return(fb);
     return FaceResult::NONE;
   }
 
-  int w  = (int)fb->width;
-  int h  = (int)fb->height;
-  int x0 = w / 5;
-  int x1 = w * 4 / 5;
-  int y0 = h / 5;
-  int y1 = h * 4 / 5;
+  const int w  = (int)fb->width;
+  const int h  = (int)fb->height;
+  const int x0 = w / 5, x1 = w * 4 / 5;
+  const int y0 = h / 5, y1 = h * 4 / 5;
 
   uint32_t       skinCount = 0;
   const uint8_t* buf       = fb->buf;
 
   for (int y = y0; y < y1; y++) {
-    int rowBase = y * w * 2;  // 2 bytes per pixel in YUYV
+    const int rowBase = y * w * 2;
     for (int x = x0; x < x1; x += 2) {
-      int     i  = rowBase + x * 2;
-      uint8_t cb = buf[i + 1];  // U (Cb)
-      uint8_t cr = buf[i + 3];  // V (Cr)
+      const int     i  = rowBase + x * 2;
+      const uint8_t cb = buf[i + 1];  // U (Cb)
+      const uint8_t cr = buf[i + 3];  // V (Cr)
       if (isSkin(cb, cr)) skinCount++;
     }
   }
 
-  esp_camera_fb_return(fb);
+  FaceResult result = FaceResult::NONE;
 
   if (skinCount >= SKIN_PIXEL_THRESHOLD) {
     Serial.printf("[Camera] face detected (skin pixels: %u)\n", skinCount);
-    return FaceResult::DETECTED;
+
+    if (_enrollNext) {
+      // Enroll this frame; return NONE so state machine is not triggered
+      _enrollNext    = false;
+      _enrollExpireMs = 0;
+      if (!FaceRecognizer::enroll(fb)) {
+        Serial.println("[Camera] enroll failed — see FaceRecognizer log for reason");
+      }
+      result = FaceResult::NONE;
+    } else if (FaceRecognizer::count() > 0) {
+      RecognitionResult rr = FaceRecognizer::recognize(fb);
+      result = (rr == RecognitionResult::KNOWN) ? FaceResult::KNOWN : FaceResult::UNKNOWN;
+    } else {
+      result = FaceResult::DETECTED;  // no enrolled faces — Phase 4 compat
+    }
   }
-  return FaceResult::NONE;
+
+  esp_camera_fb_return(fb);
+  return result;
 }
 
 // ── tick() ────────────────────────────────────────────────────────────────────
-// Returns DETECTED only on the rising edge (NONE → DETECTED transition).
-// This prevents the state machine from receiving repeated events while a face
-// remains continuously in frame.
+// Edge-detection rules (security-oriented):
+//   UNKNOWN  : fires on any non-UNKNOWN → UNKNOWN transition (KNOWN/DETECTED → UNKNOWN
+//              is a security-relevant state change that must not be suppressed).
+//   KNOWN/DETECTED: fires only on the standard rising edge (NONE → face).
+// Prevents repeated same-state events but never misses an unknown visitor.
 
 FaceResult CameraAgent::tick() {
   if (!_ok) return FaceResult::CAMERA_ERROR;
 
   unsigned long now = millis();
-  if (now < _nextDetMs) return FaceResult::NONE;  // not yet time for next sample
+  if (now < _nextDetMs) return FaceResult::NONE;
 
   _nextDetMs = now + CAMERA_DETECT_INTERVAL_MS;
 
   FaceResult current = _runDetection();
   FaceResult edge    = FaceResult::NONE;
 
-  if (current == FaceResult::DETECTED) {
+  const bool facePresent = (current != FaceResult::NONE && current != FaceResult::CAMERA_ERROR);
+
+  if (facePresent) {
     _lastDetMs = now;
-    if (_prevResult != FaceResult::DETECTED) {
-      edge = FaceResult::DETECTED;  // fire only on NONE → DETECTED transition
+    const bool prevAbsent = (_prevResult == FaceResult::NONE ||
+                             _prevResult == FaceResult::CAMERA_ERROR);
+    if (current == FaceResult::UNKNOWN) {
+      // Fire on any non-UNKNOWN → UNKNOWN; suppresses only UNKNOWN → UNKNOWN repeats
+      if (_prevResult != FaceResult::UNKNOWN) edge = current;
+    } else {
+      // Standard rising edge for KNOWN / DETECTED
+      if (prevAbsent) edge = current;
     }
   }
 
-  _prevResult = current;
+  _prevResult = facePresent ? current : FaceResult::NONE;
   _lastResult = current;
   return edge;
+}
+
+void CameraAgent::scheduleEnroll() {
+  _enrollNext     = true;
+  _enrollExpireMs = millis() + CAMERA_ENROLL_TIMEOUT_MS;
+  Serial.printf("[Camera] enroll scheduled: next detected face will be saved (timeout %lus)\n",
+                CAMERA_ENROLL_TIMEOUT_MS / 1000UL);
+}
+
+void CameraAgent::cancelEnroll() {
+  if (_enrollNext) {
+    _enrollNext = false;
+    Serial.println("[Camera] enroll cancelled");
+  }
 }
 
 // ── MJPEG stream (FreeRTOS task on core 0) ───────────────────────────────────

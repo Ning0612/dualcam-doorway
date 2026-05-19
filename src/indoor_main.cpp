@@ -12,6 +12,7 @@
 #include "DashboardServer.h"
 #include "DiscordNotifier.h"
 #include "CameraAgent.h"
+#include "FaceRecognizer.h"
 
 // ── Globals ───────────────────────────────────────────────────────────────────
 
@@ -164,6 +165,23 @@ static void handleSerialInput() {
     Serial.printf("[Indoor] camera: init=%s lastDet=%lums\n",
                   CameraAgent::isInitialized() ? "OK" : "FAIL",
                   CameraAgent::lastDetectedMs());
+  } else if (c == 'e') {
+    if (!CameraAgent::isInitialized()) {
+      Serial.println("[Indoor] camera not ready — enroll unavailable");
+    } else if (FaceRecognizer::count() >= FaceRecognizer::MAX_FACES) {
+      Serial.printf("[Indoor] face bank full (%d/%d) — clear first with 'r'\n",
+                    FaceRecognizer::count(), FaceRecognizer::MAX_FACES);
+    } else {
+      CameraAgent::scheduleEnroll();
+      Serial.printf("[Indoor] enroll scheduled (%d/%d enrolled)\n",
+                    FaceRecognizer::count(), FaceRecognizer::MAX_FACES);
+    }
+  } else if (c == 'r') {
+    CameraAgent::cancelEnroll();
+    FaceRecognizer::clearAll();
+  } else if (c == 'n') {
+    Serial.printf("[Indoor] enrolled faces: %d/%d\n",
+                  FaceRecognizer::count(), FaceRecognizer::MAX_FACES);
   } else if (c == 'W') {
     Serial.println("[Indoor] Clearing WiFi credentials and restarting...");
     if (ConfigPortal::clearCredentials()) ESP.restart();
@@ -233,6 +251,9 @@ void setup() {
                   hallRaw, hallThreshold, doorOpen ? "OPEN" : "CLOSED");
   }
 
+  // Load enrolled faces synchronously so /api/status face_count is correct from first request
+  FaceRecognizer::begin();
+
   server.begin();
   Serial.printf("[Indoor] HTTP server on port %d\n", HTTP_PORT);
 
@@ -252,6 +273,7 @@ void setup() {
   Serial.println("[Indoor]   h = show Hall value/threshold");
   Serial.println("[Indoor]   H = save current reading as threshold");
   Serial.println("[Indoor]   u = unknown visitor  a = alert  c = camera status");
+  Serial.println("[Indoor]   e = enroll next face  r = clear faces  n = face count");
   Serial.println("[Indoor]   W = clear WiFi credentials and restart to config portal");
 }
 
@@ -265,9 +287,9 @@ void loop() {
     lastPeerQuery = millis();
   }
 
-  // Phase 4: feed camera detection into state machine (edge-triggered in tick())
+  // Phase 5: any face detected indoors (known or unknown) means someone is leaving
   FaceResult face = CameraAgent::tick();
-  if (face == FaceResult::DETECTED) {
+  if (face == FaceResult::DETECTED || face == FaceResult::KNOWN || face == FaceResult::UNKNOWN) {
     sm.onIndoorFaceDetected();
   }
 

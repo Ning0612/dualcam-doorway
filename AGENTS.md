@@ -104,7 +104,7 @@ Config Portal constraints:
 Hard constraints for all agents:
 - `ConfigPortal` owns only `wifi_ssid` and `wifi_pw`. All other NVS keys (`dashboard_pw_hash`, `discord_url`) are owned by `SettingsStore`.
 - Never store SystemState, sensor readings, or runtime data to NVS.
-- Fixed IPs (`192.168.1.51` / `192.168.1.52`) are compile-time constants; never make them configurable.
+- Fixed IPs (`192.168.0.51` / `192.168.0.52`) are compile-time constants; never make them configurable.
 - No external CDN, React, or Vue anywhere; HTML must fit in ESP32 DRAM.
 
 ## Dashboard, Auth, and Settings Rules
@@ -200,8 +200,8 @@ Avoid GPIO 0, 2, 6-11, and 12. Prefer GPIO 25, 26, 27, 32, 33, 34, and 35.
 
 Use these fixed IPs only:
 
-- Indoor: `192.168.1.51`
-- Outdoor: `192.168.1.52`
+- Indoor: `192.168.0.51`
+- Outdoor: `192.168.0.52`
 
 Do not add dynamic discovery during the current phases.
 

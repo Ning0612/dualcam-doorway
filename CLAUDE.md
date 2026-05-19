@@ -53,8 +53,8 @@ build_src_filter = -<*> +<outdoor_main.cpp>
 
 | Agent | Fixed IP | Authority |
 |-------|----------|-----------|
-| Indoor | `192.168.1.51` | Home state, door sensor, leave/enter detection |
-| Outdoor | `192.168.1.52` | Visitor detection, unknown-visitor alert |
+| Indoor | `192.168.0.51` | Home state, door sensor, leave/enter detection |
+| Outdoor | `192.168.0.52` | Visitor detection, unknown-visitor alert |
 
 Each agent owns its own sense→compute→actuate loop and must function without depending on the peer for local decisions. Communication is HTTP REST JSON only (no MQTT in current phases).
 
@@ -167,6 +167,8 @@ All keys share namespace `"agent_cfg"`. Each key is owned by exactly one library
 | `wifi_pw` | `ConfigPortal` | String | max 64 chars |
 | `dashboard_pw_hash` | `SettingsStore` | String | salted SHA-256 hex; default forces change |
 | `discord_url` | `SettingsStore` | String | must match `https://discord.com/api/webhooks/` prefix; max 256 chars |
+| `face_feat` | `FaceRecognizer` | Blob | MAX_FACES × 32 × 4 bytes (float32 L2-normalized block-luminance vectors) |
+| `face_cnt` | `FaceRecognizer` | UInt8 | enrolled face count; 0 = none |
 
 ---
 

@@ -12,6 +12,7 @@
 #include "DashboardServer.h"
 #include "DiscordNotifier.h"
 #include "CameraAgent.h"
+#include "FaceRecognizer.h"
 
 // ── Globals ───────────────────────────────────────────────────────────────────
 
@@ -76,6 +77,23 @@ static void handleSerialInput() {
     Serial.printf("[Outdoor] camera: init=%s lastDet=%lums\n",
                   CameraAgent::isInitialized() ? "OK" : "FAIL",
                   CameraAgent::lastDetectedMs());
+  } else if (c == 'e') {
+    if (!CameraAgent::isInitialized()) {
+      Serial.println("[Outdoor] camera not ready — enroll unavailable");
+    } else if (FaceRecognizer::count() >= FaceRecognizer::MAX_FACES) {
+      Serial.printf("[Outdoor] face bank full (%d/%d) — clear first with 'r'\n",
+                    FaceRecognizer::count(), FaceRecognizer::MAX_FACES);
+    } else {
+      CameraAgent::scheduleEnroll();
+      Serial.printf("[Outdoor] enroll scheduled (%d/%d enrolled)\n",
+                    FaceRecognizer::count(), FaceRecognizer::MAX_FACES);
+    }
+  } else if (c == 'r') {
+    CameraAgent::cancelEnroll();
+    FaceRecognizer::clearAll();
+  } else if (c == 'n') {
+    Serial.printf("[Outdoor] enrolled faces: %d/%d\n",
+                  FaceRecognizer::count(), FaceRecognizer::MAX_FACES);
   } else if (c == 'W') {
     Serial.println("[Outdoor] Clearing WiFi credentials and restarting...");
     if (ConfigPortal::clearCredentials()) ESP.restart();
@@ -141,6 +159,9 @@ void setup() {
   // 2e (hook): state event triggers Discord on UNKNOWN_VISITOR / ALERT_MODE
   sm.setEventCallback(onStateEvent);
 
+  // Load enrolled faces synchronously so /api/status face_count is correct from first request
+  FaceRecognizer::begin();
+
   server.begin();
   Serial.printf("[Outdoor] HTTP server on port %d\n", HTTP_PORT);
 
@@ -154,7 +175,7 @@ void setup() {
     vTaskDelete(nullptr);
   }, "cam_init", 8192, nullptr, 1, nullptr);
 
-  Serial.println("[Outdoor] ready — keys: u=unknown, a=alert, c=camera status, W=clear WiFi");
+  Serial.println("[Outdoor] ready — keys: u=unknown, a=alert, c=camera, e=enroll face, r=clear faces, n=face count, W=clear WiFi");
 }
 
 void loop() {
@@ -167,11 +188,15 @@ void loop() {
     lastPeerQuery = millis();
   }
 
-  // Phase 4: feed camera detection into state machine
-  // Outdoor agent: detected face from camera = outdoor face event
+  // Phase 5: route recognition result to state machine
+  // KNOWN / DETECTED (no enrollment) → normal entry flow
+  // UNKNOWN (enrolled faces exist) → unknown visitor alert
   FaceResult face = CameraAgent::tick();
-  if (face == FaceResult::DETECTED) {
+  if (face == FaceResult::KNOWN || face == FaceResult::DETECTED) {
     sm.onOutdoorFaceDetected();
+  } else if (face == FaceResult::UNKNOWN) {
+    Serial.println("[Outdoor] unknown visitor detected by camera");
+    sm.onUnknownVisitor();
   }
 
   handleWifiLoss();

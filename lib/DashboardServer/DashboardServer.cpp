@@ -2,6 +2,8 @@
 #include "DoorStateMachine.h"
 #include "SessionAuth.h"
 #include "SettingsStore.h"
+#include "CameraAgent.h"
+#include "FaceRecognizer.h"
 #include "config.h"
 #include "states.h"
 #include <ArduinoJson.h>
@@ -24,6 +26,13 @@ static const char DASHBOARD_HTML[] =
   "<div class='lbl'>Hall Sensor</div><div id='hall'>&mdash;</div></div>"
   "<div class='card'><div class='lbl'>Peer</div><div id='peer'>&mdash;</div></div>"
   "<div class='card'><div class='lbl'>Uptime</div><div id='up'>&mdash;</div></div>"
+  "<div class='card'><div class='lbl'>Face Recognition</div>"
+  "<div id='frc'>&mdash;</div>"
+  "<div style='margin-top:8px'>"
+  "<button onclick='fr_enroll()' id='fr_eb' style='padding:5px 10px'>Enroll Face</button>"
+  "<button onclick='fr_clr()' style='padding:5px 10px;margin-left:6px'>Clear All</button>"
+  "</div><div id='fr_msg' class='lbl'></div></div>"
+  "<div id='csrf_v' style='display:none'>%CSRF%</div>"
   "<script>"
   "function fmt(ms){var s=Math.floor(ms/1000);"
   "return Math.floor(s/3600)+'h '+Math.floor(s%3600/60)+'m '+s%60+'s';}"
@@ -37,7 +46,29 @@ static const char DASHBOARD_HTML[] =
   "document.getElementById('hall_card').classList.remove('hidden');"
   "document.getElementById('hall').textContent="
   "'raw: '+d.hall_raw+' / threshold: '+d.hall_threshold;}"
+  "if(d.face_count!==undefined){"
+  "document.getElementById('frc').textContent='Enrolled: '+d.face_count+'/'+d.face_max;}"
   "}).catch(()=>{}); }"
+  "function fr_enroll(){"
+  "var c=document.getElementById('csrf_v').textContent;"
+  "document.getElementById('fr_eb').disabled=true;"
+  "document.getElementById('fr_msg').textContent='Stand in front of camera...';"
+  "fetch('/api/face/enroll',{method:'POST',"
+  "headers:{'Content-Type':'application/x-www-form-urlencoded'},"
+  "body:'csrf='+encodeURIComponent(c)})"
+  ".then(r=>r.json()).then(function(d){"
+  "document.getElementById('fr_msg').textContent="
+  "d.error?('Error: '+d.error):'Scheduled - face will be enrolled on next detection';"
+  "document.getElementById('fr_eb').disabled=false;"
+  "}).catch(function(){document.getElementById('fr_eb').disabled=false;});}"
+  "function fr_clr(){"
+  "if(!confirm('Clear all enrolled faces?'))return;"
+  "var c=document.getElementById('csrf_v').textContent;"
+  "fetch('/api/face/clear',{method:'POST',"
+  "headers:{'Content-Type':'application/x-www-form-urlencoded'},"
+  "body:'csrf='+encodeURIComponent(c)})"
+  ".then(r=>r.json()).then(function(){"
+  "document.getElementById('fr_msg').textContent='All faces cleared.';}).catch(function(){});}"
   "poll();setInterval(poll,3000);"
   "</script></body></html>";
 
@@ -170,6 +201,7 @@ void DashboardServer::begin(WebServer& server,
     if (!requireAuthAndChangedPassword(server)) return;
     String page = DASHBOARD_HTML;
     page.replace("%AGENT%", _agentLabel ? _agentLabel : "");
+    page.replace("%CSRF%", SessionAuth::getCsrfToken());
     server.send(200, "text/html", page);
   });
 
@@ -194,6 +226,9 @@ void DashboardServer::begin(WebServer& server,
       doc["hall_raw"]       = *_hallRaw;
       doc["hall_threshold"] = SettingsStore::getHallThreshold();
     }
+
+    doc["face_count"] = FaceRecognizer::count();
+    doc["face_max"]   = FaceRecognizer::MAX_FACES;
 
     String json;
     serializeJson(doc, json);
@@ -335,6 +370,47 @@ void DashboardServer::begin(WebServer& server,
 
     server.sendHeader("Location", "/dashboard");
     server.send(302, "text/plain", "");
+  });
+
+  // ── Face management API ─────────────────────────────────────────────────────
+  server.on("/api/face/enroll", HTTP_POST, [&server]() {
+    if (!requireAuthAndChangedPassword(server)) return;
+    if (!SessionAuth::verifyCsrf(server.arg("csrf"))) {
+      server.send(403, "application/json", "{\"error\":\"CSRF\"}");
+      return;
+    }
+    if (!CameraAgent::isInitialized()) {
+      server.send(503, "application/json", "{\"error\":\"camera not ready\"}");
+      return;
+    }
+    if (FaceRecognizer::count() >= FaceRecognizer::MAX_FACES) {
+      server.send(409, "application/json", "{\"error\":\"face bank full\"}");
+      return;
+    }
+    CameraAgent::scheduleEnroll();
+    JsonDocument doc;
+    doc["scheduled"] = true;
+    doc["count"]     = FaceRecognizer::count();
+    doc["max"]       = FaceRecognizer::MAX_FACES;
+    String json;
+    serializeJson(doc, json);
+    server.send(200, "application/json", json);
+  });
+
+  server.on("/api/face/clear", HTTP_POST, [&server]() {
+    if (!requireAuthAndChangedPassword(server)) return;
+    if (!SessionAuth::verifyCsrf(server.arg("csrf"))) {
+      server.send(403, "application/json", "{\"error\":\"CSRF\"}");
+      return;
+    }
+    CameraAgent::cancelEnroll();  // abort any pending enroll before clearing
+    bool ok = FaceRecognizer::clearAll();
+    JsonDocument doc;
+    doc["cleared"] = ok;
+    if (!ok) doc["error"] = "NVS write failed — reboot may restore old faces";
+    String json;
+    serializeJson(doc, json);
+    server.send(ok ? 200 : 500, "application/json", json);
   });
 
   // ── 404 fallback ────────────────────────────────────────────────────────────

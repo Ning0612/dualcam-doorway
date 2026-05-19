@@ -37,6 +37,14 @@
 // Camera Agent
 #define CAMERA_DETECT_INTERVAL_MS   500UL   // face detection rate (twice per second)
 
+// Face Recognition (Phase 5)
+// Enrollment window: if no face is detected within this period after scheduleEnroll(),
+// the pending enrollment is automatically cancelled.
+#define CAMERA_ENROLL_TIMEOUT_MS  10000UL
+// Cosine similarity threshold: above = KNOWN. Features are L2-normalized
+// block-luminance vectors; re-enroll if lighting conditions change significantly.
+#define FACE_SIMILARITY_THRESHOLD  0.92f
+
 // Discord Notifier
 #define DISCORD_RATE_LIMIT_MS    30000UL    // min interval between same-state alerts
 #define DISCORD_TIMEOUT_MS        5000UL    // connect + read timeout
