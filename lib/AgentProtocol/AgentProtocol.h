@@ -19,7 +19,9 @@ public:
   static void registerRoutes(WebServer& server, DoorStateMachine& sm,
                               const char* agentLabel);
 
-  // Query the peer agent. path is "/home_state" or "/outside_status".
+  // Query the peer agent. peerHost is the bare mDNS label (e.g. "outdoor-agent", no .local).
+  // Resolves via MDNS.queryHost() with a 1500 ms cap so loop() is never blocked.
+  // path is "/home_state" or "/outside_status".
   // Returns true and fills out on success; sets out.online=false on failure.
-  static bool queryPeer(const char* peerIp, const char* path, PeerStatus& out);
+  static bool queryPeer(const char* peerHost, const char* path, PeerStatus& out);
 };

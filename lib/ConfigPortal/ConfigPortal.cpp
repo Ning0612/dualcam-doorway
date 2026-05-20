@@ -148,8 +148,7 @@ bool ConfigPortal::clearCredentials() {
   return true;
 }
 
-void ConfigPortal::begin(const char* apName,
-                          IPAddress localIp, IPAddress gateway, IPAddress subnet) {
+void ConfigPortal::begin(const char* apName) {
   Preferences prefs;
   prefs.begin("agent_cfg", true);
   String ssid = prefs.getString("wifi_ssid", "");
@@ -158,7 +157,7 @@ void ConfigPortal::begin(const char* apName,
 
   if (ssid.length() > 0) {
     Serial.printf("[ConfigPortal] Connecting to '%s'...\n", ssid.c_str());
-    if (_tryConnect(ssid, pw, localIp, gateway, subnet)) {
+    if (_tryConnect(ssid, pw)) {
       Serial.println("[ConfigPortal] Connected.");
       return;
     }
@@ -174,8 +173,7 @@ void ConfigPortal::begin(const char* apName,
   ESP.restart();
 }
 
-bool ConfigPortal::_tryConnect(const String& ssid, const String& pw,
-                                 IPAddress local, IPAddress gw, IPAddress sub) {
+bool ConfigPortal::_tryConnect(const String& ssid, const String& pw) {
   // Prevent ESP32 from saving credentials to its own internal flash;
   // we manage them exclusively via Preferences (NVS namespace "agent_cfg").
   WiFi.persistent(false);
@@ -186,12 +184,6 @@ bool ConfigPortal::_tryConnect(const String& ssid, const String& pw,
   WiFi.mode(WIFI_STA);
   delay(100);
 
-  // Primary DNS = gateway (home router forwards DNS queries).
-  // Secondary DNS = 8.8.8.8 as fallback if gateway DNS is unresponsive.
-  if (!WiFi.config(local, gw, sub, gw, IPAddress(8, 8, 8, 8))) {
-    Serial.println("[ConfigPortal] ERROR: WiFi.config() failed; cannot assign static IP.");
-    return false;
-  }
   WiFi.begin(ssid.c_str(), pw.c_str());
 
   unsigned long start = millis();
@@ -201,9 +193,6 @@ bool ConfigPortal::_tryConnect(const String& ssid, const String& pw,
   }
 
   WiFi.setAutoReconnect(true);
-  // Static IP devices skip DHCP; gratuitous ARP is the only announcement the router
-  // gets. Allow lwIP time to complete it before any outbound traffic is attempted.
-  delay(500);
 
   Serial.printf("[ConfigPortal] IP: %s  GW: %s  DNS0: %s  DNS1: %s\n",
                 WiFi.localIP().toString().c_str(),

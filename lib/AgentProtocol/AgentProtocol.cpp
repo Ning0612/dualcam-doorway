@@ -4,6 +4,7 @@
 #include <HTTPClient.h>
 #include <WiFiClient.h>
 #include <WiFi.h>
+#include <ESPmDNS.h>
 #include <ArduinoJson.h>
 
 static DoorStateMachine* _sm          = nullptr;
@@ -41,15 +42,24 @@ void AgentProtocol::registerRoutes(WebServer& server, DoorStateMachine& sm,
   }
 }
 
-bool AgentProtocol::queryPeer(const char* peerIp, const char* path, PeerStatus& out) {
+bool AgentProtocol::queryPeer(const char* peerHost, const char* path, PeerStatus& out) {
   if (WiFi.status() != WL_CONNECTED) {
     out.online = false;
     return false;
   }
 
+  // Resolve mDNS hostname with a hard 1500 ms cap so loop() is never blocked for the
+  // ~15 s that WiFi.hostByName() can stall when the peer is absent.
+  IPAddress ip = MDNS.queryHost(const_cast<char*>(peerHost), 1500);
+  if (ip == IPAddress(0, 0, 0, 0)) {
+    out.online    = false;
+    out.updatedAt = millis();
+    return false;
+  }
+
   WiFiClient  wifiClient;
   HTTPClient  http;
-  String      url = String("http://") + peerIp + path;
+  String      url = String("http://") + ip.toString() + path;
 
   http.begin(wifiClient, url);
   http.setTimeout(3000);

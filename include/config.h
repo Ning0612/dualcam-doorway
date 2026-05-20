@@ -1,10 +1,8 @@
 #pragma once
 
-// Fixed IP assignments (compile-time constants — not user-configurable)
-#define IP_INDOOR          "192.168.0.51"
-#define IP_OUTDOOR         "192.168.0.52"
-#define IP_GATEWAY         "192.168.0.1"
-#define IP_SUBNET          "255.255.255.0"
+// mDNS hostnames — devices get IPs via DHCP, peer discovery via .local names
+#define MDNS_INDOOR        "indoor-agent"   // reachable as indoor-agent.local
+#define MDNS_OUTDOOR       "outdoor-agent"  // reachable as outdoor-agent.local
 
 // HTTP
 #define HTTP_PORT          80

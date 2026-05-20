@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <WiFi.h>
+#include <ESPmDNS.h>
 #include <WebServer.h>
 #include "config.h"
 #include "pins.h"
@@ -143,14 +144,16 @@ void setup() {
   digitalWrite(PIN_LED,    LOW);
   digitalWrite(PIN_BUZZER, LOW);
 
-  // 2a: ConfigPortal — blocks until WiFi STA is connected
-  IPAddress localIp, gateway, subnet;
-  localIp.fromString(IP_OUTDOOR);
-  gateway.fromString(IP_GATEWAY);
-  subnet.fromString(IP_SUBNET);
-  ConfigPortal::begin("DualCam-Outdoor-Setup", localIp, gateway, subnet);
+  // 2a: ConfigPortal — blocks until WiFi STA is connected (DHCP)
+  ConfigPortal::begin("DualCam-Outdoor-Setup");
 
   Serial.printf("[Outdoor] WiFi connected. IP: %s\n", WiFi.localIP().toString().c_str());
+
+  if (!MDNS.begin(MDNS_OUTDOOR)) {
+    Serial.println("[Outdoor] WARNING: mDNS start failed — peer discovery may not work.");
+  } else {
+    Serial.printf("[Outdoor] mDNS: %s.local\n", MDNS_OUTDOOR);
+  }
 
   // 2c-2d: Settings, Auth, HTTP routes
   SettingsStore::init();
@@ -188,7 +191,7 @@ void loop() {
 
   // 2b: Peer query every PEER_QUERY_INTERVAL_MS
   if (millis() - lastPeerQuery >= PEER_QUERY_INTERVAL_MS) {
-    AgentProtocol::queryPeer(IP_INDOOR, "/home_state", cachedPeer);
+    AgentProtocol::queryPeer(MDNS_INDOOR, "/home_state", cachedPeer);
     lastPeerQuery = millis();
   }
 
