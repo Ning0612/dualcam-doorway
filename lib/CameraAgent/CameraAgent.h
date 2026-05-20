@@ -33,11 +33,14 @@ public:
 
   static bool          isInitialized()  { return _ok; }
   static unsigned long lastDetectedMs() { return _lastDetMs; }
+  static FaceResult    lastRawResult()   { return _lastResult; }
+  static unsigned long lastRawResultMs() { return _lastRunMs; }
 
 private:
   static bool          _ok;
   static bool          _hasPsram;
   static unsigned long _lastDetMs;
+  static unsigned long _lastRunMs;
   static unsigned long _nextDetMs;
   static FaceResult    _prevResult;
   static FaceResult    _lastResult;

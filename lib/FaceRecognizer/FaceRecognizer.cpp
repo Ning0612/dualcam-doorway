@@ -9,6 +9,7 @@ static const char* FR_COUNT = "face_cnt";
 
 float FaceRecognizer::_bank[FaceRecognizer::MAX_FACES][FaceRecognizer::FEATURE_DIM];
 int   FaceRecognizer::_n = 0;
+void(*FaceRecognizer::_onClearCb)() = nullptr;
 
 void FaceRecognizer::begin() {
   _load();
@@ -119,6 +120,7 @@ RecognitionResult FaceRecognizer::recognize(camera_fb_t* fb) {
 
 bool FaceRecognizer::clearAll() {
   _n = 0;
+  if (_onClearCb) _onClearCb();
   if (!_persist()) {
     Serial.println("[FaceRecognizer] WARNING: NVS clear failed — runtime cleared but reboot may restore old data");
     return false;

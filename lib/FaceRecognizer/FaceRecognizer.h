@@ -18,10 +18,12 @@ public:
   static RecognitionResult recognize(camera_fb_t* fb);
   static int  count() { return _n; }
   static bool clearAll();  // returns false if NVS persist fails
+  static void setOnClearCallback(void(*cb)()) { _onClearCb = cb; }
 
 private:
   static float _bank[MAX_FACES][FEATURE_DIM];
   static int   _n;
+  static void(*_onClearCb)();
 
   static void  _extract(camera_fb_t* fb, float* out);
   static float _similarity(const float* a, const float* b);

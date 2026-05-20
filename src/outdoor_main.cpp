@@ -13,6 +13,7 @@
 #include "DiscordNotifier.h"
 #include "CameraAgent.h"
 #include "FaceRecognizer.h"
+#include "FaceVoter.h"
 
 // ── Globals ───────────────────────────────────────────────────────────────────
 
@@ -25,6 +26,7 @@ static unsigned long lastBlinkMs   = 0;
 static bool          ledState      = false;
 
 static unsigned long wifiLostMs = 0;
+static FaceVoter     faceVoter;
 
 // ── WiFi loss monitoring ──────────────────────────────────────────────────────
 // Resets on any successful reconnect. If WiFi flaps briefly but recovers, the
@@ -90,7 +92,7 @@ static void handleSerialInput() {
     }
   } else if (c == 'r') {
     CameraAgent::cancelEnroll();
-    FaceRecognizer::clearAll();
+    FaceRecognizer::clearAll();  // triggers faceVoter.reset() via registered callback
   } else if (c == 'n') {
     Serial.printf("[Outdoor] enrolled faces: %d/%d\n",
                   FaceRecognizer::count(), FaceRecognizer::MAX_FACES);
@@ -161,6 +163,8 @@ void setup() {
 
   // Load enrolled faces synchronously so /api/status face_count is correct from first request
   FaceRecognizer::begin();
+  // Reset voter on any clearAll() call (serial 'r' or dashboard /api/face/clear)
+  FaceRecognizer::setOnClearCallback([]{ faceVoter.reset(); });
 
   server.begin();
   Serial.printf("[Outdoor] HTTP server on port %d\n", HTTP_PORT);
@@ -188,14 +192,24 @@ void loop() {
     lastPeerQuery = millis();
   }
 
-  // Phase 5: route recognition result to state machine
-  // KNOWN / DETECTED (no enrollment) → normal entry flow
-  // UNKNOWN (enrolled faces exist) → unknown visitor alert
-  FaceResult face = CameraAgent::tick();
-  if (face == FaceResult::KNOWN || face == FaceResult::DETECTED) {
+  // Phase 5: route recognition result to state machine via vote window.
+  // DETECTED (no enrolled faces) → direct edge-triggered path (unchanged).
+  // KNOWN / UNKNOWN → pass through FaceVoter: KNOWN_CONFIRMED fires immediately on
+  // FACE_VOTE_KNOWN_MIN hits; UNKNOWN_CONFIRMED fires only after FACE_VOTE_WINDOW_MS
+  // of sustained UNKNOWN with no KNOWN hit, preventing single-frame false alarms.
+  FaceResult edge = CameraAgent::tick();
+  if (edge == FaceResult::DETECTED) {
     sm.onOutdoorFaceDetected();
-  } else if (face == FaceResult::UNKNOWN) {
-    Serial.println("[Outdoor] unknown visitor detected by camera");
+  }
+  VoteResult vote = faceVoter.update(
+    CameraAgent::lastRawResult(),
+    CameraAgent::lastRawResultMs(),
+    millis()
+  );
+  if (vote == VoteResult::KNOWN_CONFIRMED) {
+    sm.onOutdoorFaceDetected();
+  } else if (vote == VoteResult::UNKNOWN_CONFIRMED) {
+    Serial.println("[Outdoor] unknown visitor confirmed by vote window");
     sm.onUnknownVisitor();
   }
 

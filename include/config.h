@@ -53,3 +53,8 @@
 // Session Auth
 #define LOGIN_LOCKOUT_MS         60000UL    // lockout duration after max fails
 #define LOGIN_MAX_FAILS               5
+
+// Face Vote Window (outdoor agent)
+#define FACE_VOTE_WINDOW_MS   30000UL  // 30s of sustained UNKNOWN with no KNOWN hit triggers alert
+#define FACE_VOTE_IDLE_MS      5000UL  // no face for this long resets the voter window silently
+#define FACE_VOTE_KNOWN_MIN       1    // min KNOWN hits in window to confirm (raise to 2 for stricter)

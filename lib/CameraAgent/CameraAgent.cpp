@@ -30,6 +30,7 @@ bool          CameraAgent::_hasPsram   = false;
 bool          CameraAgent::_enrollNext      = false;
 unsigned long CameraAgent::_enrollExpireMs  = 0;
 unsigned long CameraAgent::_lastDetMs  = 0;
+unsigned long CameraAgent::_lastRunMs  = 0;
 unsigned long CameraAgent::_nextDetMs  = 0;
 FaceResult    CameraAgent::_prevResult = FaceResult::NONE;
 FaceResult    CameraAgent::_lastResult = FaceResult::NONE;
@@ -201,6 +202,7 @@ FaceResult CameraAgent::tick() {
   _nextDetMs = now + CAMERA_DETECT_INTERVAL_MS;
 
   FaceResult current = _runDetection();
+  _lastRunMs = now;
   FaceResult edge    = FaceResult::NONE;
 
   const bool facePresent = (current != FaceResult::NONE && current != FaceResult::CAMERA_ERROR);
