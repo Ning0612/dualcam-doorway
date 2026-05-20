@@ -15,6 +15,11 @@ public:
   static bool notify(const String& webhookUrl, SystemState forState,
                      const String& message);
 
+  // One-shot startup notification (e.g., boot IP announcement).
+  // Intentionally does NOT update _failCooldownUntil or _lastNotifyMs so that
+  // a failed boot message cannot suppress subsequent security-alert notifications.
+  static bool notifyBoot(const String& webhookUrl, const String& message);
+
 private:
   static unsigned long _lastNotifyMs[9];   // indexed by (int)SystemState
   static unsigned long _failCooldownUntil;

@@ -172,6 +172,19 @@ void setup() {
   server.begin();
   Serial.printf("[Outdoor] HTTP server on port %d\n", HTTP_PORT);
 
+  // Announce IP on Discord asynchronously — same rationale as indoor.
+  if (xTaskCreate([](void*) {
+    vTaskDelay(pdMS_TO_TICKS(5000));
+    String url = SettingsStore::getDiscordUrl();
+    if (url.length() > 0) {
+      String ip = WiFi.localIP().toString();
+      DiscordNotifier::notifyBoot(url, "<Outdoor> IP: http://" + ip);
+    }
+    vTaskDelete(nullptr);
+  }, "boot_notify", 8192, nullptr, 1, nullptr) != pdPASS) {
+    Serial.println("[Outdoor] WARNING: boot_notify task creation failed.");
+  }
+
   // Phase 4: camera init in background task — keeps loop() unblocked
   xTaskCreate([](void*) {
     if (!CameraAgent::begin()) {

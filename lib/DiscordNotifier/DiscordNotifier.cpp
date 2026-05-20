@@ -80,6 +80,38 @@ bool DiscordNotifier::notify(const String& webhookUrl, SystemState forState,
   return false;
 }
 
+bool DiscordNotifier::notifyBoot(const String& webhookUrl, const String& message) {
+  if (WiFi.status() != WL_CONNECTED) return false;
+  if (!_isValidUrl(webhookUrl))       return false;
+
+  JsonDocument doc;
+  doc["content"] = message;
+  String payload;
+  serializeJson(doc, payload);
+
+  WiFiClientSecure client;
+#ifdef DISCORD_TLS_INSECURE
+  client.setInsecure();
+#else
+  client.setCACert(DISCORD_ROOT_CA_CERT);
+#endif
+
+  HTTPClient http;
+  http.begin(client, webhookUrl);
+  http.addHeader("Content-Type", "application/json");
+  http.setTimeout(DISCORD_TIMEOUT_MS);
+
+  int code = http.POST(payload);
+  http.end();
+
+  if (code == 204 || code == 200) {
+    Serial.printf("[Discord] Boot notify OK (HTTP %d).\n", code);
+    return true;
+  }
+  Serial.printf("[Discord] Boot notify failed (HTTP %d) — security alerts unaffected.\n", code);
+  return false;
+}
+
 bool DiscordNotifier::_isValidUrl(const String& url) {
   return url.startsWith("https://discord.com/api/webhooks/") ||
          url.startsWith("https://discordapp.com/api/webhooks/");

@@ -260,6 +260,22 @@ void setup() {
   server.begin();
   Serial.printf("[Indoor] HTTP server on port %d\n", HTTP_PORT);
 
+  // Announce IP on Discord asynchronously so setup() is not blocked by HTTPS timeout.
+  // Delayed 5 s to avoid simultaneous heap competition with cam_init during boot.
+  // notifyBoot() intentionally does not touch _failCooldownUntil, keeping security
+  // alert channels unaffected even if the boot message fails.
+  if (xTaskCreate([](void*) {
+    vTaskDelay(pdMS_TO_TICKS(5000));
+    String url = SettingsStore::getDiscordUrl();
+    if (url.length() > 0) {
+      String ip = WiFi.localIP().toString();
+      DiscordNotifier::notifyBoot(url, "<Indoor> IP: http://" + ip);
+    }
+    vTaskDelete(nullptr);
+  }, "boot_notify", 8192, nullptr, 1, nullptr) != pdPASS) {
+    Serial.println("[Indoor] WARNING: boot_notify task creation failed.");
+  }
+
   // Phase 4: camera init runs in a background task so loop() is never blocked.
   // esp_camera_init() can stall on I2C if the module is absent or mis-wired;
   // running it off the main core keeps the HTTP server responsive regardless.
