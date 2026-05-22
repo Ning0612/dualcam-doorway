@@ -12,17 +12,25 @@ class FaceRecognizer {
 public:
   static constexpr int MAX_FACES   = 7;
   static constexpr int FEATURE_DIM = 32;  // 16 means + 16 stddevs, unit-length
+  static constexpr int MAX_NAME_LEN = 16; // max display name per face
 
   static void begin();
-  static bool enroll(camera_fb_t* fb);
+  static bool enroll(camera_fb_t* fb, const char* name = nullptr);
   static RecognitionResult recognize(camera_fb_t* fb);
   static int  count() { return _n; }
   static bool clearAll();  // returns false if NVS persist fails
   static void setOnClearCallback(void(*cb)()) { _onClearCb = cb; }
 
+  // Returns name for slot index, or nullptr if index is out of range or name is empty.
+  static const char* getName(int index);
+  // Returns name of the last recognize() match (KNOWN result), or nullptr.
+  static const char* getLastMatchName();
+
 private:
   static float _bank[MAX_FACES][FEATURE_DIM];
+  static char  _names[MAX_FACES][MAX_NAME_LEN + 1];
   static int   _n;
+  static int   _lastMatchIdx;
   static void(*_onClearCb)();
 
   static void  _extract(camera_fb_t* fb, float* out);

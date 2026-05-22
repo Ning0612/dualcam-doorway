@@ -20,7 +20,7 @@ public:
   // Flag the next detected face for enrollment instead of recognition.
   // Enrollment is automatically cancelled after CAMERA_ENROLL_TIMEOUT_MS if no face appears.
   // Safe to call from loop() or a route handler (core-1 only).
-  static void scheduleEnroll();
+  static void scheduleEnroll(const char* name = nullptr);
   static void cancelEnroll();
 
   // Starts MJPEG stream server on port 81 via a dedicated FreeRTOS task.
@@ -49,6 +49,7 @@ private:
 
   static bool          _enrollNext;
   static unsigned long _enrollExpireMs;
+  static char          _enrollName[17];  // max 16 chars + null, matches FaceRecognizer::MAX_NAME_LEN
   static FaceResult _runDetection();
   static void       _streamTaskFn(void* arg);
 };

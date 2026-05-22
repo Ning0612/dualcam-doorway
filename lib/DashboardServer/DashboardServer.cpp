@@ -13,62 +13,100 @@
 static const char DASHBOARD_HTML[] =
   "<!DOCTYPE html><html><head>"
   "<meta charset='utf-8'><title>DualCam - %AGENT%</title>"
-  "<style>body{font-family:sans-serif;max-width:600px;margin:20px auto;padding:20px}"
+  "<style>"
+  "body{font-family:sans-serif;max-width:760px;margin:20px auto;padding:20px}"
   ".card{background:#f5f5f5;border-radius:8px;padding:16px;margin:12px 0}"
   ".st{font-size:1.4em;font-weight:bold}.lbl{color:#666;font-size:.85em}"
-  "a{color:#0070f3}nav{margin-bottom:16px}"
-  ".hidden{display:none}</style></head><body>"
+  "a{color:#0070f3}nav{margin-bottom:16px}.hidden{display:none}"
+  ".row{display:flex;gap:16px;flex-wrap:wrap}.col{flex:1;min-width:260px}"
+  "#cam{width:100%;border-radius:6px;background:#222;min-height:180px;display:block}"
+  ".bdg{display:inline-block;padding:2px 10px;border-radius:10px;font-size:.85em;font-weight:bold}"
+  ".kn{background:#d4edda;color:#155724}.un{background:#f8d7da;color:#721c24}"
+  ".no{background:#e2e3e5;color:#555}"
+  ".frl{list-style:none;padding:0;margin:8px 0}"
+  ".frl li{padding:4px 0;border-bottom:1px solid #ddd;font-size:.9em}"
+  "input[type=text]{width:100%;padding:7px;margin:6px 0;box-sizing:border-box;"
+  "border:1px solid #ccc;border-radius:4px}"
+  "button{padding:7px 14px;background:#0070f3;color:#fff;border:none;"
+  "border-radius:4px;cursor:pointer;margin-right:4px}"
+  "button:disabled{opacity:.5}.red{background:#dc3545}"
+  "</style></head><body>"
   "<h2>DualCam &mdash; %AGENT%</h2>"
   "<nav><a href='/settings'>Settings</a> | <a href='/logout'>Logout</a></nav>"
+  "<div class='row'>"
+  "<div class='col'>"
   "<div class='card'><div class='lbl'>State</div><div class='st' id='st'>&mdash;</div></div>"
   "<div class='card'><div class='lbl'>Door</div><div id='door'>&mdash;</div></div>"
-  "<div id='hall_card' class='card hidden'>"
-  "<div class='lbl'>Hall Sensor</div><div id='hall'>&mdash;</div></div>"
+  "<div id='hc' class='card hidden'><div class='lbl'>Hall Sensor</div><div id='hall'>&mdash;</div></div>"
   "<div class='card'><div class='lbl'>Peer</div><div id='peer'>&mdash;</div></div>"
   "<div class='card'><div class='lbl'>Uptime</div><div id='up'>&mdash;</div></div>"
-  "<div class='card'><div class='lbl'>Face Recognition</div>"
-  "<div id='frc'>&mdash;</div>"
-  "<div style='margin-top:8px'>"
-  "<button onclick='fr_enroll()' id='fr_eb' style='padding:5px 10px'>Enroll Face</button>"
-  "<button onclick='fr_clr()' style='padding:5px 10px;margin-left:6px'>Clear All</button>"
-  "</div><div id='fr_msg' class='lbl'></div></div>"
-  "<div id='csrf_v' style='display:none'>%CSRF%</div>"
+  "</div>"
+  "<div class='col'>"
+  "<div class='card'><div class='lbl'>Camera Preview</div>"
+  "<img id='cam' alt='stream'>"
+  "<div style='margin-top:8px'>Recognition: <span id='badge' class='bdg no'>&mdash;</span></div>"
+  "</div>"
+  "</div>"
+  "</div>"
+  "<div class='card'>"
+  "<div class='lbl'>Face Recognition (<span id='fc'>0</span>/%MAX% enrolled)</div>"
+  "<ul class='frl' id='fl'><li style='color:#999'>No faces enrolled</li></ul>"
+  "<input type='text' id='fn' placeholder='Enter name to enroll' maxlength='16'>"
+  "<button onclick='enr()' id='eb'>Enroll Face</button>"
+  "<button onclick='clr()' class='red'>Clear All</button>"
+  "<div id='msg' class='lbl' style='margin-top:4px'></div>"
+  "</div>"
+  "<div id='cv' style='display:none'>%CSRF%</div>"
   "<script>"
+  "document.getElementById('cam').src='http://'+location.hostname+':81/stream';"
   "function fmt(ms){var s=Math.floor(ms/1000);"
   "return Math.floor(s/3600)+'h '+Math.floor(s%3600/60)+'m '+s%60+'s';}"
-  "function poll(){fetch('/api/status').then(r=>r.json()).then(d=>{"
+  "function poll(){"
+  "fetch('/api/status').then(r=>r.json()).then(d=>{"
   "document.getElementById('st').textContent=d.state||'?';"
   "document.getElementById('door').textContent=d.door||'?';"
-  "document.getElementById('peer').textContent="
-  "d.peer_online?(d.peer_state||'?'):'offline';"
+  "document.getElementById('peer').textContent=d.peer_online?(d.peer_state||'?'):'offline';"
   "document.getElementById('up').textContent=fmt(d.uptime||0);"
   "if(d.hall_raw!==undefined){"
-  "document.getElementById('hall_card').classList.remove('hidden');"
-  "document.getElementById('hall').textContent="
-  "'raw: '+d.hall_raw+' / threshold: '+d.hall_threshold;}"
-  "if(d.face_count!==undefined){"
-  "document.getElementById('frc').textContent='Enrolled: '+d.face_count+'/'+d.face_max;}"
-  "}).catch(()=>{}); }"
-  "function fr_enroll(){"
-  "var c=document.getElementById('csrf_v').textContent;"
-  "document.getElementById('fr_eb').disabled=true;"
-  "document.getElementById('fr_msg').textContent='Stand in front of camera...';"
+  "document.getElementById('hc').classList.remove('hidden');"
+  "document.getElementById('hall').textContent='raw: '+d.hall_raw+' / threshold: '+d.hall_threshold;}"
+  "if(d.face_count!==undefined)document.getElementById('fc').textContent=d.face_count;"
+  "var b=document.getElementById('badge');"
+  "if(d.face_result==='KNOWN'){b.className='bdg kn';b.textContent=d.face_name||'Known';}"
+  "else if(d.face_result==='UNKNOWN'){b.className='bdg un';b.textContent='Unknown';}"
+  "else{b.className='bdg no';b.textContent='No face';}"
+  "}).catch(()=>{});"
+  "fetch('/api/face/list').then(r=>r.json()).then(d=>{"
+  "var ul=document.getElementById('fl');ul.innerHTML='';"
+  "if(d.faces&&d.faces.length){"
+  "d.faces.forEach(function(n,i){"
+  "var li=document.createElement('li');"
+  "li.textContent=(i+1)+'. '+(n||'(unnamed)');ul.appendChild(li);});}"
+  "else ul.innerHTML='<li style=\"color:#999\">No faces enrolled</li>';"
+  "}).catch(()=>{});}"
+  "function enr(){"
+  "var n=document.getElementById('fn').value.trim();"
+  "if(!n){document.getElementById('msg').textContent='Please enter a name.';return;}"
+  "var c=document.getElementById('cv').textContent;"
+  "document.getElementById('eb').disabled=true;"
+  "document.getElementById('msg').textContent='Stand in front of camera...';"
   "fetch('/api/face/enroll',{method:'POST',"
   "headers:{'Content-Type':'application/x-www-form-urlencoded'},"
-  "body:'csrf='+encodeURIComponent(c)})"
+  "body:'csrf='+encodeURIComponent(c)+'&name='+encodeURIComponent(n)})"
   ".then(r=>r.json()).then(function(d){"
-  "document.getElementById('fr_msg').textContent="
-  "d.error?('Error: '+d.error):'Scheduled - face will be enrolled on next detection';"
-  "document.getElementById('fr_eb').disabled=false;"
-  "}).catch(function(){document.getElementById('fr_eb').disabled=false;});}"
-  "function fr_clr(){"
+  "document.getElementById('msg').textContent="
+  "d.error?('Error: '+d.error):'Scheduled: \"'+n+'\" will be enrolled on next detection';"
+  "document.getElementById('eb').disabled=false;"
+  "document.getElementById('fn').value='';}).catch(function(){document.getElementById('eb').disabled=false;});}"
+  "function clr(){"
   "if(!confirm('Clear all enrolled faces?'))return;"
-  "var c=document.getElementById('csrf_v').textContent;"
+  "var c=document.getElementById('cv').textContent;"
   "fetch('/api/face/clear',{method:'POST',"
   "headers:{'Content-Type':'application/x-www-form-urlencoded'},"
   "body:'csrf='+encodeURIComponent(c)})"
   ".then(r=>r.json()).then(function(){"
-  "document.getElementById('fr_msg').textContent='All faces cleared.';}).catch(function(){});}"
+  "document.getElementById('msg').textContent='All faces cleared.';"
+  "document.getElementById('fl').innerHTML='<li style=\"color:#999\">No faces enrolled</li>';}).catch(()=>{});}"
   "poll();setInterval(poll,3000);"
   "</script></body></html>";
 
@@ -201,7 +239,8 @@ void DashboardServer::begin(WebServer& server,
     if (!requireAuthAndChangedPassword(server)) return;
     String page = DASHBOARD_HTML;
     page.replace("%AGENT%", _agentLabel ? _agentLabel : "");
-    page.replace("%CSRF%", SessionAuth::getCsrfToken());
+    page.replace("%CSRF%",  SessionAuth::getCsrfToken());
+    page.replace("%MAX%",   String(FaceRecognizer::MAX_FACES));
     server.send(200, "text/html", page);
   });
 
@@ -229,6 +268,26 @@ void DashboardServer::begin(WebServer& server,
 
     doc["face_count"] = FaceRecognizer::count();
     doc["face_max"]   = FaceRecognizer::MAX_FACES;
+
+    // Recognition result — only report if a face was seen within FACE_RECENT_MS
+    FaceResult fr = FaceResult::NONE;
+    if (CameraAgent::isInitialized()) {
+      unsigned long sinceDetect = millis() - CameraAgent::lastDetectedMs();
+      if (sinceDetect < FACE_RECENT_MS) {
+        fr = CameraAgent::lastRawResult();
+      }
+    }
+    if (fr == FaceResult::KNOWN) {
+      doc["face_result"] = "KNOWN";
+      const char* fname = FaceRecognizer::getLastMatchName();
+      doc["face_name"]   = fname ? fname : "";
+    } else if (fr == FaceResult::UNKNOWN) {
+      doc["face_result"] = "UNKNOWN";
+    } else if (fr == FaceResult::DETECTED) {
+      doc["face_result"] = "DETECTED";
+    } else {
+      doc["face_result"] = "NONE";
+    }
 
     String json;
     serializeJson(doc, json);
@@ -387,11 +446,33 @@ void DashboardServer::begin(WebServer& server,
       server.send(409, "application/json", "{\"error\":\"face bank full\"}");
       return;
     }
-    CameraAgent::scheduleEnroll();
+    String name = server.arg("name");
+    name.trim();
+    // Allow printable ASCII only; strip control characters and non-ASCII bytes
+    String sanitized;
+    for (size_t i = 0; i < name.length() && (int)sanitized.length() < FaceRecognizer::MAX_NAME_LEN; i++) {
+      char c = name[i];
+      if (c >= 32 && c < 127) sanitized += c;
+    }
+    name = sanitized;
+    CameraAgent::scheduleEnroll(name.length() > 0 ? name.c_str() : nullptr);
     JsonDocument doc;
     doc["scheduled"] = true;
     doc["count"]     = FaceRecognizer::count();
     doc["max"]       = FaceRecognizer::MAX_FACES;
+    String json;
+    serializeJson(doc, json);
+    server.send(200, "application/json", json);
+  });
+
+  server.on("/api/face/list", HTTP_GET, [&server]() {
+    if (!requireAuthAndChangedPassword(server)) return;
+    JsonDocument doc;
+    JsonArray faces = doc["faces"].to<JsonArray>();
+    for (int i = 0; i < FaceRecognizer::count(); i++) {
+      const char* n = FaceRecognizer::getName(i);
+      faces.add(n ? n : "");
+    }
     String json;
     serializeJson(doc, json);
     server.send(200, "application/json", json);

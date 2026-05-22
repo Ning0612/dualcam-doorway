@@ -29,6 +29,7 @@ bool          CameraAgent::_ok         = false;
 bool          CameraAgent::_hasPsram   = false;
 bool          CameraAgent::_enrollNext      = false;
 unsigned long CameraAgent::_enrollExpireMs  = 0;
+char          CameraAgent::_enrollName[17]  = {};
 unsigned long CameraAgent::_lastDetMs  = 0;
 unsigned long CameraAgent::_lastRunMs  = 0;
 unsigned long CameraAgent::_nextDetMs  = 0;
@@ -45,6 +46,8 @@ static const char* STREAM_END = "\r\n--frame--\r\n";
 // ── begin() ───────────────────────────────────────────────────────────────────
 
 bool CameraAgent::begin() {
+  static_assert(sizeof(_enrollName) - 1 == FaceRecognizer::MAX_NAME_LEN,
+                "_enrollName size must match FaceRecognizer::MAX_NAME_LEN");
   _hasPsram = psramFound();
 
   camera_config_t cfg;
@@ -170,9 +173,10 @@ FaceResult CameraAgent::_runDetection() {
       // Enroll this frame; return NONE so state machine is not triggered
       _enrollNext    = false;
       _enrollExpireMs = 0;
-      if (!FaceRecognizer::enroll(fb)) {
+      if (!FaceRecognizer::enroll(fb, _enrollName[0] ? _enrollName : nullptr)) {
         Serial.println("[Camera] enroll failed — see FaceRecognizer log for reason");
       }
+      _enrollName[0] = '\0';
       result = FaceResult::NONE;
     } else if (FaceRecognizer::count() > 0) {
       RecognitionResult rr = FaceRecognizer::recognize(fb);
@@ -225,11 +229,17 @@ FaceResult CameraAgent::tick() {
   return edge;
 }
 
-void CameraAgent::scheduleEnroll() {
+void CameraAgent::scheduleEnroll(const char* name) {
   _enrollNext     = true;
   _enrollExpireMs = millis() + CAMERA_ENROLL_TIMEOUT_MS;
-  Serial.printf("[Camera] enroll scheduled: next detected face will be saved (timeout %lus)\n",
-                CAMERA_ENROLL_TIMEOUT_MS / 1000UL);
+  if (name && name[0]) {
+    strncpy(_enrollName, name, 16);
+    _enrollName[16] = '\0';
+  } else {
+    _enrollName[0] = '\0';
+  }
+  Serial.printf("[Camera] enroll scheduled for '%s' (timeout %lus)\n",
+                _enrollName[0] ? _enrollName : "(unnamed)", CAMERA_ENROLL_TIMEOUT_MS / 1000UL);
 }
 
 void CameraAgent::cancelEnroll() {

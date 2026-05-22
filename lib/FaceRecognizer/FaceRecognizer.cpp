@@ -6,12 +6,16 @@
 static const char* FR_NS    = "agent_cfg";
 static const char* FR_FEAT  = "face_feat";
 static const char* FR_COUNT = "face_cnt";
+static const char* FR_NAMES = "face_names";
 
 float FaceRecognizer::_bank[FaceRecognizer::MAX_FACES][FaceRecognizer::FEATURE_DIM];
+char  FaceRecognizer::_names[FaceRecognizer::MAX_FACES][FaceRecognizer::MAX_NAME_LEN + 1];
 int   FaceRecognizer::_n = 0;
+int   FaceRecognizer::_lastMatchIdx = -1;
 void(*FaceRecognizer::_onClearCb)() = nullptr;
 
 void FaceRecognizer::begin() {
+  memset(_names, 0, sizeof(_names));
   _load();
   Serial.printf("[FaceRecognizer] loaded %d/%d face(s)\n", _n, MAX_FACES);
 }
@@ -81,7 +85,7 @@ static bool _fbValid(camera_fb_t* fb) {
   return true;
 }
 
-bool FaceRecognizer::enroll(camera_fb_t* fb) {
+bool FaceRecognizer::enroll(camera_fb_t* fb, const char* name) {
   if (_n >= MAX_FACES) {
     Serial.printf("[FaceRecognizer] enroll rejected: full (%d/%d)\n", _n, MAX_FACES);
     return false;
@@ -91,19 +95,27 @@ bool FaceRecognizer::enroll(camera_fb_t* fb) {
     return false;
   }
   _extract(fb, _bank[_n]);
+  if (name && name[0]) {
+    strncpy(_names[_n], name, MAX_NAME_LEN);
+    _names[_n][MAX_NAME_LEN] = '\0';
+  } else {
+    _names[_n][0] = '\0';
+  }
   _n++;
   if (!_persist()) {
-    // Rollback: keep runtime state consistent with NVS
+    // Rollback runtime state; re-persist to ensure NVS reflects the rolled-back count
     _n--;
+    memset(_names[_n], 0, MAX_NAME_LEN + 1);
+    _persist();  // best-effort NVS sync; failure logged inside _persist()
     Serial.println("[FaceRecognizer] enroll failed: NVS write error (rolled back)");
     return false;
   }
-  Serial.printf("[FaceRecognizer] face %d/%d enrolled\n", _n, MAX_FACES);
+  Serial.printf("[FaceRecognizer] face %d/%d enrolled as '%s'\n", _n, MAX_FACES, _names[_n - 1]);
   return true;
 }
 
 RecognitionResult FaceRecognizer::recognize(camera_fb_t* fb) {
-  if (!_fbValid(fb) || _n == 0) return RecognitionResult::UNKNOWN;
+  if (!_fbValid(fb) || _n == 0) { _lastMatchIdx = -1; return RecognitionResult::UNKNOWN; }
 
   float feat[FEATURE_DIM];
   _extract(fb, feat);
@@ -111,15 +123,28 @@ RecognitionResult FaceRecognizer::recognize(camera_fb_t* fb) {
   for (int i = 0; i < _n; i++) {
     float sim = _similarity(feat, _bank[i]);
     if (sim >= FACE_SIMILARITY_THRESHOLD) {
-      Serial.printf("[FaceRecognizer] match face %d (sim=%.3f)\n", i, sim);
+      _lastMatchIdx = i;
+      Serial.printf("[FaceRecognizer] match face %d '%s' (sim=%.3f)\n", i, _names[i], sim);
       return RecognitionResult::KNOWN;
     }
   }
+  _lastMatchIdx = -1;
   return RecognitionResult::UNKNOWN;
+}
+
+const char* FaceRecognizer::getName(int idx) {
+  if (idx < 0 || idx >= _n) return nullptr;
+  return _names[idx][0] ? _names[idx] : nullptr;
+}
+
+const char* FaceRecognizer::getLastMatchName() {
+  return getName(_lastMatchIdx);
 }
 
 bool FaceRecognizer::clearAll() {
   _n = 0;
+  _lastMatchIdx = -1;
+  memset(_names, 0, sizeof(_names));
   if (_onClearCb) _onClearCb();
   if (!_persist()) {
     Serial.println("[FaceRecognizer] WARNING: NVS clear failed — runtime cleared but reboot may restore old data");
@@ -139,10 +164,13 @@ bool FaceRecognizer::_persist() {
   bool ok = true;
   if (prefs.putUChar(FR_COUNT, (uint8_t)_n) == 0) ok = false;
   if (_n > 0) {
-    const size_t bytes = (size_t)_n * FEATURE_DIM * sizeof(float);
-    if (prefs.putBytes(FR_FEAT, _bank, bytes) != bytes) ok = false;
+    const size_t fBytes = (size_t)_n * FEATURE_DIM * sizeof(float);
+    if (prefs.putBytes(FR_FEAT, _bank, fBytes) != fBytes) ok = false;
+    const size_t nBytes = (size_t)_n * (MAX_NAME_LEN + 1);
+    if (prefs.putBytes(FR_NAMES, _names, nBytes) != nBytes) ok = false;
   } else {
     prefs.remove(FR_FEAT);
+    prefs.remove(FR_NAMES);
   }
   prefs.end();
   return ok;
@@ -154,10 +182,15 @@ void FaceRecognizer::_load() {
   const uint8_t cnt = prefs.getUChar(FR_COUNT, 0);
   bool corrupted = false;
   if (cnt > 0 && cnt <= MAX_FACES) {
-    const size_t expected = (size_t)cnt * FEATURE_DIM * sizeof(float);
-    const size_t got = prefs.getBytes(FR_FEAT, _bank, expected);
-    if (got == expected) {
+    const size_t fExpected = (size_t)cnt * FEATURE_DIM * sizeof(float);
+    const size_t got = prefs.getBytes(FR_FEAT, _bank, fExpected);
+    if (got == fExpected) {
       _n = (int)cnt;
+      // Load names — best-effort; older firmware may not have them, leaving names empty.
+      // Force-NUL-terminate every slot to guard against partial/corrupt blobs.
+      const size_t nExpected = (size_t)cnt * (MAX_NAME_LEN + 1);
+      prefs.getBytes(FR_NAMES, _names, nExpected);
+      for (int i = 0; i < _n; i++) _names[i][MAX_NAME_LEN] = '\0';
     } else {
       Serial.println("[FaceRecognizer] NVS data size mismatch — clearing stored faces");
       _n        = 0;
