@@ -42,6 +42,10 @@
 // Cosine similarity threshold: above = KNOWN. Features are L2-normalized
 // block-luminance vectors; re-enroll if lighting conditions change significantly.
 #define FACE_SIMILARITY_THRESHOLD  0.92f
+// Minimum mean block-stddev (pre-normalization) required before matching.
+// Uniform scenes (ceiling, wall) have near-zero texture and are rejected.
+// Observed face tex: 30-44; observe [FaceRecognizer] UNKNOWN (tex=X) to calibrate.
+#define FACE_TEXTURE_MIN_STDDEV   20.0f
 
 // Discord Notifier
 #define DISCORD_RATE_LIMIT_MS    30000UL    // min interval between same-state alerts
@@ -53,6 +57,8 @@
 #define LOGIN_MAX_FAILS               5
 
 // Face Vote Window (outdoor agent)
-#define FACE_VOTE_WINDOW_MS   30000UL  // 30s of sustained UNKNOWN with no KNOWN hit triggers alert
-#define FACE_VOTE_IDLE_MS      5000UL  // no face for this long resets the voter window silently
-#define FACE_VOTE_KNOWN_MIN       1    // min KNOWN hits in window to confirm (raise to 2 for stricter)
+#define FACE_VOTE_WINDOW_MS          30000UL  // min elapsed time (ms) for UNKNOWN_CONFIRMED
+#define FACE_VOTE_IDLE_MS             5000UL  // no face for this long silently resets the voter
+#define FACE_VOTE_KNOWN_MIN               3   // KNOWN hits required within one burst window
+#define FACE_VOTE_KNOWN_WINDOW_MS     8000UL  // burst window for KNOWN hit accumulation
+#define FACE_VOTE_UNKNOWN_MIN_HITS       10   // min UNKNOWN frame hits required for UNKNOWN_CONFIRMED

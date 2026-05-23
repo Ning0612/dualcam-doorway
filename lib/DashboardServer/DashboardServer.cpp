@@ -23,6 +23,7 @@ static const char DASHBOARD_HTML[] =
   ".bdg{display:inline-block;padding:2px 10px;border-radius:10px;font-size:.85em;font-weight:bold}"
   ".kn{background:#d4edda;color:#155724}.un{background:#f8d7da;color:#721c24}"
   ".no{background:#e2e3e5;color:#555}"
+  ".kp{background:#fff3cd;color:#856404}.up{background:#ffd8a8;color:#7d4e00}"
   ".frl{list-style:none;padding:0;margin:8px 0}"
   ".frl li{padding:4px 0;border-bottom:1px solid #ddd;font-size:.9em}"
   "input[type=text]{width:100%;padding:7px;margin:6px 0;box-sizing:border-box;"
@@ -44,7 +45,10 @@ static const char DASHBOARD_HTML[] =
   "<div class='col'>"
   "<div class='card'><div class='lbl'>Camera Preview</div>"
   "<img id='cam' alt='stream'>"
-  "<div style='margin-top:8px'>Recognition: <span id='badge' class='bdg no'>&mdash;</span></div>"
+  "<div style='margin-top:8px;display:flex;gap:16px;flex-wrap:wrap'>"
+  "<div><div class='lbl'>Now</div><span id='raw' class='bdg no'>&mdash;</span></div>"
+  "<div><div class='lbl'>Vote</div><span id='badge' class='bdg no'>&mdash;</span></div>"
+  "</div>"
   "</div>"
   "</div>"
   "</div>"
@@ -71,10 +75,24 @@ static const char DASHBOARD_HTML[] =
   "document.getElementById('hc').classList.remove('hidden');"
   "document.getElementById('hall').textContent='raw: '+d.hall_raw+' / threshold: '+d.hall_threshold;}"
   "if(d.face_count!==undefined)document.getElementById('fc').textContent=d.face_count;"
-  "var b=document.getElementById('badge');"
-  "if(d.face_result==='KNOWN'){b.className='bdg kn';b.textContent=d.face_name||'Known';}"
+  "var r=document.getElementById('raw');"
+  "if(d.face_result==='KNOWN'){r.className='bdg kn';"
+  "r.textContent=(d.face_name||'Known')+(d.face_sim>0?' · '+d.face_sim.toFixed(3):'');}"
+  "else if(d.face_result==='UNKNOWN'){r.className='bdg un';"
+  "r.textContent='Unknown'+(d.face_tex>0?' · tex:'+d.face_tex.toFixed(1):'');}"
+  "else if(d.face_result==='DETECTED'){r.className='bdg no';r.textContent='Detected';}"
+  "else{r.className='bdg no';r.textContent='—';}"
+  "var b=document.getElementById('badge'),fv=d.face_voter_state;"
+  "if(fv==='known_confirmed'){b.className='bdg kn';"
+  "b.textContent=d.face_voter_confirmed_name||d.face_name||'Known';}"
+  "else if(fv==='unknown_pending'){b.className='bdg up';"
+  "b.textContent='Detecting… '+d.face_voter_unknown_elapsed_s+'s/'+d.face_voter_unknown_window_s+'s · '+d.face_voter_unknown_hits+' hits';}"
+  "else if(fv==='known_pending'){b.className='bdg kp';"
+  "b.textContent='Known? '+(d.face_name?d.face_name+' ':'')+d.face_voter_known_count+'/'+d.face_voter_known_min+' hits';}"
+  "else if(d.face_result==='KNOWN'){b.className='bdg kn';b.textContent=d.face_name||'Known';}"
   "else if(d.face_result==='UNKNOWN'){b.className='bdg un';b.textContent='Unknown';}"
-  "else{b.className='bdg no';b.textContent='No face';}"
+  "else if(d.face_result==='DETECTED'){b.className='bdg no';b.textContent='Detected';}"
+  "else{b.className='bdg no';b.textContent='—';}"
   "}).catch(()=>{});"
   "fetch('/api/face/list').then(r=>r.json()).then(d=>{"
   "var ul=document.getElementById('fl');ul.innerHTML='';"
@@ -160,12 +178,13 @@ static const char PWCHANGE_HTML[] =
 
 // ── Module-level state ────────────────────────────────────────────────────────
 
-static DoorStateMachine* _sm          = nullptr;
-static const char*       _agentLabel  = nullptr;
-static PeerStatus*       _cachedPeer  = nullptr;
+static DoorStateMachine* _sm            = nullptr;
+static const char*       _agentLabel    = nullptr;
+static PeerStatus*       _cachedPeer    = nullptr;
 static bool*             _doorOpen      = nullptr;
 static uint16_t*         _hallRaw       = nullptr;
 static uint16_t*         _hallThreshold = nullptr;
+static FaceVoter*        _faceVoter     = nullptr;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -215,13 +234,15 @@ void DashboardServer::begin(WebServer& server,
                              PeerStatus* cachedPeer,
                              bool* doorOpen,
                              uint16_t* hallRaw,
-                             uint16_t* hallThreshold) {
+                             uint16_t* hallThreshold,
+                             FaceVoter* faceVoter) {
   _sm            = &sm;
   _agentLabel    = agentLabel;
   _cachedPeer    = cachedPeer;
   _doorOpen      = doorOpen;
   _hallRaw       = hallRaw;
   _hallThreshold = hallThreshold;
+  _faceVoter     = faceVoter;
 
   // Root → dashboard
   server.on("/", HTTP_GET, [&server]() {
@@ -279,14 +300,37 @@ void DashboardServer::begin(WebServer& server,
     }
     if (fr == FaceResult::KNOWN) {
       doc["face_result"] = "KNOWN";
-      const char* fname = FaceRecognizer::getLastMatchName();
-      doc["face_name"]   = fname ? fname : "";
     } else if (fr == FaceResult::UNKNOWN) {
       doc["face_result"] = "UNKNOWN";
     } else if (fr == FaceResult::DETECTED) {
       doc["face_result"] = "DETECTED";
     } else {
       doc["face_result"] = "NONE";
+    }
+    // Always include last matched name so known_pending badge can show who it is
+    {
+      const char* fname = FaceRecognizer::getLastMatchName();
+      doc["face_name"] = fname ? fname : "";
+    }
+    doc["face_sim"] = FaceRecognizer::getLastSim();
+    doc["face_tex"] = FaceRecognizer::getLastTex();
+
+    // FaceVoter state — outdoor only; indoor passes nullptr
+    if (_faceVoter) {
+      FaceVoterStatus fvs = _faceVoter->getStatus(millis());
+      const char* voterState;
+      if      (fvs.knownConfirmed)   voterState = "known_confirmed";
+      else if (!fvs.active)          voterState = "idle";
+      else if (fvs.unknownHits > 0)  voterState = "unknown_pending";
+      else if (fvs.knownCount > 0)   voterState = "known_pending";
+      else                           voterState = "active";
+      doc["face_voter_state"]             = voterState;
+      doc["face_voter_confirmed_name"]    = fvs.confirmedName;
+      doc["face_voter_known_count"]       = fvs.knownCount;
+      doc["face_voter_known_min"]         = fvs.knownMin;
+      doc["face_voter_unknown_hits"]      = fvs.unknownHits;
+      doc["face_voter_unknown_elapsed_s"] = (int)(fvs.unknownElapsedMs / 1000UL);
+      doc["face_voter_unknown_window_s"]  = (int)(fvs.unknownWindowMs  / 1000UL);
     }
 
     String json;

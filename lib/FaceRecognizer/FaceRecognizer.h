@@ -2,12 +2,13 @@
 #include <Arduino.h>
 #include "esp_camera.h"
 
-enum class RecognitionResult { KNOWN, UNKNOWN };
+enum class RecognitionResult { KNOWN, UNKNOWN, NO_FACE };
 
 // Lightweight face recognizer using YUV422 block-luminance features.
 // Extracts 32 floats (16 block means + 16 block stddevs, L2-normalized)
 // from the central 60% of a YUV422 frame and compares via cosine similarity.
-// Requires PSRAM (YUV422 mode). Falls back to UNKNOWN if frame is JPEG.
+// Requires PSRAM (YUV422 mode). Returns NO_FACE for JPEG, invalid frames,
+// low-texture scenes (ceiling/wall), or when no faces are enrolled.
 class FaceRecognizer {
 public:
   static constexpr int MAX_FACES   = 7;
@@ -25,15 +26,22 @@ public:
   static const char* getName(int index);
   // Returns name of the last recognize() match (KNOWN result), or nullptr.
   static const char* getLastMatchName();
+  // Returns cosine similarity of the last KNOWN match (0 if last result was not KNOWN).
+  static float getLastSim() { return _lastSim; }
+  // Returns mean block-stddev texture score of the last recognize() call (0 if never called).
+  static float getLastTex() { return _lastTex; }
 
 private:
   static float _bank[MAX_FACES][FEATURE_DIM];
   static char  _names[MAX_FACES][MAX_NAME_LEN + 1];
   static int   _n;
   static int   _lastMatchIdx;
+  static float _lastSim;  // similarity of last KNOWN match; 0 otherwise
+  static float _lastTex;  // texture score of last recognize() call
   static void(*_onClearCb)();
 
-  static void  _extract(camera_fb_t* fb, float* out);
+  // Returns mean block-stddev (pre-normalization) as a texture quality score.
+  static float _extract(camera_fb_t* fb, float* out);
   static float _similarity(const float* a, const float* b);
   static bool  _persist();
   static void  _load();

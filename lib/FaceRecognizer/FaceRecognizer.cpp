@@ -10,8 +10,10 @@ static const char* FR_NAMES = "face_names";
 
 float FaceRecognizer::_bank[FaceRecognizer::MAX_FACES][FaceRecognizer::FEATURE_DIM];
 char  FaceRecognizer::_names[FaceRecognizer::MAX_FACES][FaceRecognizer::MAX_NAME_LEN + 1];
-int   FaceRecognizer::_n = 0;
+int   FaceRecognizer::_n           = 0;
 int   FaceRecognizer::_lastMatchIdx = -1;
+float FaceRecognizer::_lastSim      = 0.f;
+float FaceRecognizer::_lastTex      = 0.f;
 void(*FaceRecognizer::_onClearCb)() = nullptr;
 
 void FaceRecognizer::begin() {
@@ -25,13 +27,15 @@ void FaceRecognizer::begin() {
 // per block (16+16=32 floats), then L2-normalizes the vector.
 // Caller must validate: fb->format==YUV422, fb->buf!=null, adequate fb->len.
 // YUYV layout: Y at byte index (y*W*2 + x*2).
-void FaceRecognizer::_extract(camera_fb_t* fb, float* out) {
+float FaceRecognizer::_extract(camera_fb_t* fb, float* out) {
   const int W  = (int)fb->width;
   const int H  = (int)fb->height;
   const int x0 = W / 5, x1 = W * 4 / 5;
   const int y0 = H / 5, y1 = H * 4 / 5;
   const int rw = x1 - x0, rh = y1 - y0;
   const uint8_t* buf = fb->buf;
+
+  float textureSum = 0.f;
 
   for (int br = 0; br < 4; br++) {
     for (int bc = 0; bc < 4; bc++) {
@@ -58,6 +62,7 @@ void FaceRecognizer::_extract(camera_fb_t* fb, float* out) {
 
       out[br * 4 + bc]      = mean;
       out[16 + br * 4 + bc] = std;
+      textureSum += std;
     }
   }
 
@@ -68,6 +73,8 @@ void FaceRecognizer::_extract(camera_fb_t* fb, float* out) {
   if (norm > 1e-6f) {
     for (int i = 0; i < FEATURE_DIM; i++) out[i] /= norm;
   }
+
+  return textureSum / 16.0f;  // mean block stddev before normalization
 }
 
 float FaceRecognizer::_similarity(const float* a, const float* b) {
@@ -94,7 +101,7 @@ bool FaceRecognizer::enroll(camera_fb_t* fb, const char* name) {
     Serial.println("[FaceRecognizer] enroll rejected: invalid frame (format/size)");
     return false;
   }
-  _extract(fb, _bank[_n]);
+  _extract(fb, _bank[_n]);  // texture not checked on enroll — deliberate user action
   if (name && name[0]) {
     strncpy(_names[_n], name, MAX_NAME_LEN);
     _names[_n][MAX_NAME_LEN] = '\0';
@@ -115,20 +122,38 @@ bool FaceRecognizer::enroll(camera_fb_t* fb, const char* name) {
 }
 
 RecognitionResult FaceRecognizer::recognize(camera_fb_t* fb) {
-  if (!_fbValid(fb) || _n == 0) { _lastMatchIdx = -1; return RecognitionResult::UNKNOWN; }
+  if (!_fbValid(fb) || _n == 0) {
+    _lastMatchIdx = -1; _lastSim = 0.f; _lastTex = 0.f;
+    return RecognitionResult::NO_FACE;
+  }
 
   float feat[FEATURE_DIM];
-  _extract(fb, feat);
+  float texture = _extract(fb, feat);
+  _lastTex = texture;
+
+  if (texture < FACE_TEXTURE_MIN_STDDEV) {
+    Serial.printf("[FaceRecognizer] reject: flat scene (texture=%.1f)\n", texture);
+    _lastMatchIdx = -1; _lastSim = 0.f;
+    return RecognitionResult::NO_FACE;
+  }
 
   for (int i = 0; i < _n; i++) {
     float sim = _similarity(feat, _bank[i]);
     if (sim >= FACE_SIMILARITY_THRESHOLD) {
       _lastMatchIdx = i;
-      Serial.printf("[FaceRecognizer] match face %d '%s' (sim=%.3f)\n", i, _names[i], sim);
+      _lastSim      = sim;
+      Serial.printf("[FaceRecognizer] match face %d '%s' (sim=%.3f, tex=%.1f)\n",
+                    i, _names[i], sim, texture);
       return RecognitionResult::KNOWN;
     }
   }
-  _lastMatchIdx = -1;
+  _lastMatchIdx = -1; _lastSim = 0.f;
+  static unsigned long _lastUnknownLogMs = 0;
+  unsigned long nowMs = millis();
+  if (nowMs - _lastUnknownLogMs >= 10000UL) {
+    _lastUnknownLogMs = nowMs;
+    Serial.printf("[FaceRecognizer] UNKNOWN (tex=%.1f)\n", texture);
+  }
   return RecognitionResult::UNKNOWN;
 }
 

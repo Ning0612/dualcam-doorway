@@ -159,7 +159,8 @@ void setup() {
   SettingsStore::init();
   SessionAuth::begin(server);
   AgentProtocol::registerRoutes(server, sm, "Outdoor");
-  DashboardServer::begin(server, sm, "Outdoor", &cachedPeer, nullptr);
+  DashboardServer::begin(server, sm, "Outdoor", &cachedPeer,
+                         nullptr, nullptr, nullptr, &faceVoter);
 
   // 2e (hook): state event triggers Discord on UNKNOWN_VISITOR / ALERT_MODE
   sm.setEventCallback(onStateEvent);
@@ -223,6 +224,7 @@ void loop() {
     millis()
   );
   if (vote == VoteResult::KNOWN_CONFIRMED) {
+    faceVoter.setConfirmedName(FaceRecognizer::getLastMatchName());
     sm.onOutdoorFaceDetected();
   } else if (vote == VoteResult::UNKNOWN_CONFIRMED) {
     Serial.println("[Outdoor] unknown visitor confirmed by vote window");

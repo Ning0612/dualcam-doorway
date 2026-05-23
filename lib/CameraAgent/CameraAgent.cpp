@@ -119,10 +119,14 @@ bool CameraAgent::begin() {
 // Detection region: central 60% of frame to reduce background noise.
 // Threshold: >= SKIN_PIXEL_THRESHOLD skin pixels in that region.
 
-#define SKIN_PIXEL_THRESHOLD  800
+// Balanced threshold: lower than 1500 to avoid missing small/distant faces.
+#define SKIN_PIXEL_THRESHOLD  1200
 
-static inline bool isSkin(uint8_t cb, uint8_t cr) {
-  return (cb >= 77 && cb <= 127) && (cr >= 133 && cr <= 173);
+// Kovac YCbCr thresholds + luminance gate.
+// Y < 60: too dark (shadow); Y > 235: overexposed (white ceiling under bright light).
+static inline bool isSkin(uint8_t y, uint8_t cb, uint8_t cr) {
+  return (y >= 60 && y <= 235) &&
+         (cb >= 77 && cb <= 127) && (cr >= 133 && cr <= 173);
 }
 
 FaceResult CameraAgent::_runDetection() {
@@ -158,9 +162,10 @@ FaceResult CameraAgent::_runDetection() {
     const int rowBase = y * w * 2;
     for (int x = x0; x < x1; x += 2) {
       const int     i  = rowBase + x * 2;
-      const uint8_t cb = buf[i + 1];  // U (Cb)
-      const uint8_t cr = buf[i + 3];  // V (Cr)
-      if (isSkin(cb, cr)) skinCount++;
+      const uint8_t luma = buf[i];      // Y0
+      const uint8_t cb   = buf[i + 1];  // U (Cb)
+      const uint8_t cr   = buf[i + 3];  // V (Cr)
+      if (isSkin(luma, cb, cr)) skinCount++;
     }
   }
 
@@ -180,7 +185,9 @@ FaceResult CameraAgent::_runDetection() {
       result = FaceResult::NONE;
     } else if (FaceRecognizer::count() > 0) {
       RecognitionResult rr = FaceRecognizer::recognize(fb);
-      result = (rr == RecognitionResult::KNOWN) ? FaceResult::KNOWN : FaceResult::UNKNOWN;
+      if      (rr == RecognitionResult::KNOWN)   result = FaceResult::KNOWN;
+      else if (rr == RecognitionResult::UNKNOWN) result = FaceResult::UNKNOWN;
+      else                                        result = FaceResult::NONE;  // NO_FACE: flat scene
     } else {
       result = FaceResult::DETECTED;  // no enrolled faces — Phase 4 compat
     }
