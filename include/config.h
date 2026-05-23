@@ -57,7 +57,7 @@
 #define LOGIN_MAX_FAILS               5
 
 // Face Vote Window (outdoor agent)
-#define FACE_VOTE_WINDOW_MS          30000UL  // min elapsed time (ms) for UNKNOWN_CONFIRMED
+#define FACE_VOTE_WINDOW_MS          10000UL  // min elapsed time (ms) for UNKNOWN_CONFIRMED
 #define FACE_VOTE_IDLE_MS             5000UL  // no face for this long silently resets the voter
 #define FACE_VOTE_KNOWN_MIN               3   // KNOWN hits required within one burst window
 #define FACE_VOTE_KNOWN_WINDOW_MS     8000UL  // burst window for KNOWN hit accumulation

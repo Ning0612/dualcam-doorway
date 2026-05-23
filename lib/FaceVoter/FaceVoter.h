@@ -29,7 +29,7 @@ struct FaceVoterStatus {
 // avoid false-known events suppressing unknown-visitor alerts.
 //
 // Persistent unknown visitor: UNKNOWN_CONFIRMED resets the window immediately,
-// so a visitor who stays will re-trigger every FACE_VOTE_WINDOW_MS (30s).
+// so a visitor who stays will re-trigger every FACE_VOTE_WINDOW_MS.
 struct FaceVoter {
   VoteResult      update(FaceResult raw, unsigned long rawMs, unsigned long now);
   void            reset();
