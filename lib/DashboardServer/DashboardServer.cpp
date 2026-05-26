@@ -604,10 +604,6 @@ void DashboardServer::begin(WebServer& server,
       server.send(503, "application/json", "{\"error\":\"camera not ready\"}");
       return;
     }
-    if (FaceRecognizer::count() >= FaceRecognizer::MAX_FACES) {
-      server.send(409, "application/json", "{\"error\":\"face bank full\"}");
-      return;
-    }
     String name = server.arg("name");
     name.trim();
     String sanitized;
@@ -616,6 +612,11 @@ void DashboardServer::begin(WebServer& server,
       if (c >= 32 && c < 127) sanitized += c;
     }
     name = sanitized;
+    // canEnroll() checks: existing user → template slots; new user → user slots
+    if (!FaceRecognizer::canEnroll(name.length() > 0 ? name.c_str() : nullptr)) {
+      server.send(409, "application/json", "{\"error\":\"face bank full\"}");
+      return;
+    }
     CameraAgent::scheduleEnroll(name.length() > 0 ? name.c_str() : nullptr);
     JsonDocument doc;
     doc["scheduled"] = true;

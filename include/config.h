@@ -40,8 +40,13 @@
 // Enrollment window: if no face detected within this period after scheduleEnroll(),
 // the pending enrollment is automatically cancelled.
 #define CAMERA_ENROLL_TIMEOUT_MS  10000UL
-// Cosine similarity threshold: above = KNOWN.
-#define FACE_SIMILARITY_THRESHOLD  0.92f
+// Cosine similarity threshold: above = KNOWN (per-template best score).
+// Lowered to 0.90 to accommodate multi-template diversity across lighting/angle.
+#define FACE_SIMILARITY_THRESHOLD  0.90f
+// Minimum margin between best-user score and second-best-user score.
+// Prevents misidentification when two users have similar feature vectors.
+// Only applies when ≥2 users are enrolled; single-user scenarios ignore margin.
+#define FACE_MARGIN_MIN            0.03f
 // Minimum mean block-stddev before matching.
 // Uniform scenes (ceiling, wall) have near-zero texture and are rejected.
 #define FACE_TEXTURE_MIN_STDDEV   20.0f
