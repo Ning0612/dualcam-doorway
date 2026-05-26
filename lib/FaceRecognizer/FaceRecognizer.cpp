@@ -26,10 +26,18 @@ void FaceRecognizer::begin() {
   Serial.printf("[FaceRecognizer] loaded %d/%d user(s)\n", _n, MAX_FACES);
 }
 
-// Extracts 32-dimensional feature from YUV422 (YUYV) frame.
-// Divides central 60% region into 4×4 blocks; computes mean-Y and stddev-Y
-// per block (16+16=32 floats), then L2-normalizes the vector.
-// Caller must validate: fb->format==YUV422, fb->buf!=null, adequate fb->len.
+// Extracts 64-dimensional HOG-lite feature from YUV422 (YUYV) frame.
+//
+// Pipeline:
+//   Central 60% ROI → 4×4 grid of cells → per-cell 4-bin gradient histogram
+//   → per-cell L1 normalize → global L2 normalize → 64-float unit vector
+//
+// Orientation bins (unsigned, no atan2):
+//   ax = |dx|, ay = |dy|, sign-agreement = (dx ^ dy) >= 0
+//   ax >= ay → horizontal edge:  bin 0 (same-sign) / bin 1 (diff-sign)
+//   ay >  ax → vertical edge:    bin 2 (same-sign) / bin 3 (diff-sign)
+//
+// Returns mean L1 gradient per pixel as texture score (see FACE_TEXTURE_MIN_STDDEV).
 // YUYV layout: Y at byte index (y*W*2 + x*2).
 float FaceRecognizer::_extract(camera_fb_t* fb, float* out) {
   const int W  = (int)fb->width;
@@ -39,46 +47,80 @@ float FaceRecognizer::_extract(camera_fb_t* fb, float* out) {
   const int rw = x1 - x0, rh = y1 - y0;
   const uint8_t* buf = fb->buf;
 
-  float textureSum = 0.f;
+  memset(out, 0, FEATURE_DIM * sizeof(float));
 
-  for (int br = 0; br < 4; br++) {
-    for (int bc = 0; bc < 4; bc++) {
-      const int bx0 = x0 + bc * rw / 4;
-      const int bx1 = x0 + (bc + 1) * rw / 4;
-      const int by0 = y0 + br * rh / 4;
-      const int by1 = y0 + (br + 1) * rh / 4;
+  float totalEnergy = 0.f;
+  int   totalPix    = 0;
+  int   activeCells = 0;  // cells with mean gradient per pixel > 0.5 (Codex finding #2)
 
-      float sum = 0, sum2 = 0;
-      int   n   = 0;
+  for (int cr = 0; cr < 4; cr++) {
+    for (int cc = 0; cc < 4; cc++) {
+      const int bx0 = x0 + cc * rw / 4;
+      const int bx1 = x0 + (cc + 1) * rw / 4;
+      const int by0 = y0 + cr * rh / 4;
+      const int by1 = y0 + (cr + 1) * rh / 4;
+
+      float hist[4]    = {};
+      float cellEnergy = 0.f;
+      int   cellPix    = 0;
+
       for (int y = by0; y < by1; y++) {
-        const int base = y * W * 2;
+        if (y < 1 || y >= H - 1) continue;
+        const uint8_t* row  = buf + y       * W * 2;
+        const uint8_t* rowP = buf + (y - 1) * W * 2;
+        const uint8_t* rowN = buf + (y + 1) * W * 2;
+
         for (int x = bx0; x < bx1; x++) {
-          const float yv = buf[base + x * 2];
-          sum  += yv;
-          sum2 += yv * yv;
-          n++;
+          if (x < 1 || x >= W - 1) continue;
+          cellPix++;
+
+          const int16_t dx = (int16_t)row[(x + 1) * 2] - (int16_t)row[(x - 1) * 2];
+          const int16_t dy = (int16_t)rowN[x * 2]      - (int16_t)rowP[x * 2];
+          const int16_t ax = (dx >= 0) ? dx : -dx;
+          const int16_t ay = (dy >= 0) ? dy : -dy;
+          const float   mag = (float)(ax + ay);
+
+          if (mag < 2.f) continue;  // ignore near-zero gradients (noise floor)
+
+          // Unsigned orientation: explicit sign comparison (readable, no bitwise trick)
+          const bool sameSign = (dx >= 0) == (dy >= 0);
+          const int  bin      = (ax >= ay) ? (sameSign ? 0 : 1) : (sameSign ? 2 : 3);
+          hist[bin] += mag;
+          cellEnergy += mag;
         }
       }
 
-      const float mean = (n > 0) ? sum / (float)n : 0.f;
-      const float var  = (n > 0) ? (sum2 / (float)n - mean * mean) : 0.f;
-      const float std  = (var > 0.f) ? sqrtf(var) : 0.f;
+      // Per-cell L1 normalize → removes absolute brightness / contrast variation.
+      // Cells with negligible gradient stay zero (treated as featureless).
+      if (cellEnergy > 1.f) {
+        for (int b = 0; b < 4; b++) hist[b] /= cellEnergy;
+        // Cell is "active" if mean gradient per pixel exceeds noise floor
+        if (cellPix > 0 && (cellEnergy / (float)cellPix) > 0.5f) activeCells++;
+      }
 
-      out[br * 4 + bc]      = mean;
-      out[16 + br * 4 + bc] = std;
-      textureSum += std;
+      const int base_idx = (cr * 4 + cc) * 4;
+      for (int b = 0; b < 4; b++) out[base_idx + b] = hist[b];
+
+      totalEnergy += cellEnergy;
+      totalPix    += cellPix;
     }
   }
 
-  // L2 normalize so cosine similarity equals dot product
-  float norm = 0;
+  // Active-cell gate: reject frames where gradient is too sparse or concentrated
+  // in too few cells (e.g. single door-frame edge, shadow stripe, hair sliver).
+  // Require at least 4 of 16 cells to be active before proceeding to match.
+  if (activeCells < 4) return 0.f;
+
+  // Global L2 normalize so cosine similarity = dot product
+  float norm = 0.f;
   for (int i = 0; i < FEATURE_DIM; i++) norm += out[i] * out[i];
   norm = sqrtf(norm);
   if (norm > 1e-6f) {
     for (int i = 0; i < FEATURE_DIM; i++) out[i] /= norm;
   }
 
-  return textureSum / 16.0f;  // mean block stddev before normalization
+  // Texture score: mean L1 gradient per pixel (blank wall → ~0, face → ~2–8)
+  return (totalPix > 0) ? (totalEnergy / (float)totalPix) : 0.f;
 }
 
 float FaceRecognizer::_similarity(const float* a, const float* b) {
@@ -289,7 +331,10 @@ void FaceRecognizer::_load() {
   if (!prefs.begin(FR_NS, true)) return;
   const uint8_t cnt = prefs.getUChar(FR_COUNT, 0);
   bool corrupted = false;
-  if (cnt > 0 && cnt <= MAX_FACES) {
+  if (cnt > (uint8_t)MAX_FACES) {
+    Serial.printf("[FaceRecognizer] NVS face_cnt=%d out of range — clearing\n", cnt);
+    corrupted = true;
+  } else if (cnt > 0) {
     const size_t fExpected = (size_t)cnt * MAX_TEMPLATES_PER_USER * FEATURE_DIM * sizeof(float);
     const size_t got = prefs.getBytes(FR_FEAT, _bank, fExpected);
     if (got == fExpected) {

@@ -4,15 +4,16 @@
 
 enum class RecognitionResult { KNOWN, UNKNOWN, NO_FACE };
 
-// Lightweight face recognizer using YUV422 block-luminance features.
-// Extracts 32 floats (16 block means + 16 block stddevs, L2-normalized)
-// from the central 60% of a YUV422 frame and compares via cosine similarity.
+// Lightweight face recognizer using HOG-lite features on YUV422 (YUYV) frames.
+// Extracts 64 floats (4×4 cells × 4 orientation bins, per-cell L1 + global L2
+// normalized) from the central 60% of a YUV422 frame and compares via cosine
+// similarity with per-user best-template matching and second-best margin check.
 // Requires PSRAM (YUV422 mode). Returns NO_FACE for JPEG, invalid frames,
-// low-texture scenes (ceiling/wall), or when no faces are enrolled.
+// low-gradient or sparse-active-cell scenes, or when no faces are enrolled.
 class FaceRecognizer {
 public:
   static constexpr int MAX_FACES             = 7;
-  static constexpr int FEATURE_DIM           = 32;  // 16 means + 16 stddevs, unit-length
+  static constexpr int FEATURE_DIM           = 64;  // HOG-lite: 4×4 cells × 4 orientation bins
   static constexpr int MAX_NAME_LEN          = 16;  // max display name per user
   static constexpr int MAX_TEMPLATES_PER_USER = 5;  // templates per enrolled user
 
@@ -36,7 +37,7 @@ public:
   static const char* getLastMatchName();
   // Returns cosine similarity of the last KNOWN match (0 if last result was not KNOWN).
   static float getLastSim() { return _lastSim; }
-  // Returns mean block-stddev texture score of the last recognize() call (0 if never called).
+  // Returns mean L1 gradient per pixel (HOG texture score) of the last recognize() call.
   static float getLastTex() { return _lastTex; }
 
 private:
@@ -49,7 +50,7 @@ private:
   static float   _lastTex;  // texture score of last recognize() call
   static void(*_onClearCb)();
 
-  // Returns mean block-stddev (pre-normalization) as a texture quality score.
+  // Returns mean L1 gradient per pixel as texture quality score (0 if sparse/rejected).
   static float _extract(camera_fb_t* fb, float* out);
   static float _similarity(const float* a, const float* b);
   static bool  _persist();

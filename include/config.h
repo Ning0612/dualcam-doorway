@@ -47,9 +47,10 @@
 // Prevents misidentification when two users have similar feature vectors.
 // Only applies when ≥2 users are enrolled; single-user scenarios ignore margin.
 #define FACE_MARGIN_MIN            0.03f
-// Minimum mean block-stddev before matching.
-// Uniform scenes (ceiling, wall) have near-zero texture and are rejected.
-#define FACE_TEXTURE_MIN_STDDEV   20.0f
+// Minimum mean L1 gradient per pixel (HOG-lite texture score).
+// Uniform scenes (ceiling, wall) have near-zero gradient and are rejected.
+// Typical values: blank wall ≈ 0.0–0.3, face ≈ 1.5–8.0. Tune via serial log.
+#define FACE_TEXTURE_MIN_STDDEV   1.5f
 
 // Discord Notifier
 #define DISCORD_RATE_LIMIT_MS    30000UL    // min interval between same-event alerts
