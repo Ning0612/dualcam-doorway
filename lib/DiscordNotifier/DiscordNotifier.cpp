@@ -5,22 +5,23 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 
-unsigned long DiscordNotifier::_lastNotifyMs[9]  = {};
-unsigned long DiscordNotifier::_failCooldownUntil = 0;
+unsigned long DiscordNotifier::_lastNotifyMs[DiscordNotifier::ALERT_EVENT_COUNT] = {};
+unsigned long DiscordNotifier::_failCooldownStartMs = 0;
 
-bool DiscordNotifier::notify(const String& webhookUrl, SystemState forState,
+bool DiscordNotifier::notify(const String& webhookUrl, AlertEvent event,
                               const String& message) {
   // ── Fail-fast checks (no network I/O) ──────────────────────────────────────
   if (WiFi.status() != WL_CONNECTED)  return false;
   if (!_isValidUrl(webhookUrl))        return false;
 
-  if (millis() < _failCooldownUntil) {
+  if (_failCooldownStartMs != 0 &&
+      millis() - _failCooldownStartMs < DISCORD_FAIL_COOLDOWN_MS) {
     Serial.println("[Discord] Skipped: failure cooldown active.");
     return false;
   }
 
-  int idx = static_cast<int>(forState);
-  if (idx >= 0 && idx < 9) {
+  int idx = static_cast<int>(event);
+  if (idx >= 0 && idx < ALERT_EVENT_COUNT) {
     if (_lastNotifyMs[idx] != 0 && millis() - _lastNotifyMs[idx] < DISCORD_RATE_LIMIT_MS) {
       Serial.println("[Discord] Skipped: rate limited.");
       return false;
@@ -65,7 +66,7 @@ bool DiscordNotifier::notify(const String& webhookUrl, SystemState forState,
 
   // Discord returns 204 No Content on success (200 in some rare cases)
   if (code == 204 || code == 200) {
-    if (idx >= 0 && idx < 9) _lastNotifyMs[idx] = millis();
+    if (idx >= 0 && idx < ALERT_EVENT_COUNT) _lastNotifyMs[idx] = millis();
     Serial.printf("[Discord] OK (HTTP %d).\n", code);
     return true;
   }
@@ -73,7 +74,7 @@ bool DiscordNotifier::notify(const String& webhookUrl, SystemState forState,
   if (code <= 0 || code == 429 || (code >= 500 && code < 600)) {
     Serial.printf("[Discord] Error (code %d). Cooldown for %lu ms.\n",
                   code, DISCORD_FAIL_COOLDOWN_MS);
-    _failCooldownUntil = millis() + DISCORD_FAIL_COOLDOWN_MS;
+    _failCooldownStartMs = millis();
   } else {
     Serial.printf("[Discord] Failed (HTTP %d).\n", code);
   }
@@ -93,6 +94,9 @@ bool DiscordNotifier::notifyBoot(const String& webhookUrl, const String& message
 #ifdef DISCORD_TLS_INSECURE
   client.setInsecure();
 #else
+  #ifndef DISCORD_ROOT_CA_CERT
+    #error "DiscordNotifier: define DISCORD_ROOT_CA_CERT (PEM) or define DISCORD_TLS_INSECURE."
+  #endif
   client.setCACert(DISCORD_ROOT_CA_CERT);
 #endif
 

@@ -1,7 +1,8 @@
 #include "DashboardServer.h"
-#include "DoorStateMachine.h"
 #include "SessionAuth.h"
 #include "SettingsStore.h"
+#include "ConfigManager.h"
+#include "DoorSensor.h"
 #include "CameraAgent.h"
 #include "FaceRecognizer.h"
 #include "config.h"
@@ -12,18 +13,18 @@
 
 static const char DASHBOARD_HTML[] =
   "<!DOCTYPE html><html><head>"
-  "<meta charset='utf-8'><title>DualCam - %AGENT%</title>"
+  "<meta charset='utf-8'><title>Agent 1 - %AGENT%</title>"
   "<style>"
-  "body{font-family:sans-serif;max-width:760px;margin:20px auto;padding:20px}"
+  "body{font-family:sans-serif;max-width:820px;margin:20px auto;padding:20px}"
   ".card{background:#f5f5f5;border-radius:8px;padding:16px;margin:12px 0}"
   ".st{font-size:1.4em;font-weight:bold}.lbl{color:#666;font-size:.85em}"
   "a{color:#0070f3}nav{margin-bottom:16px}.hidden{display:none}"
   ".row{display:flex;gap:16px;flex-wrap:wrap}.col{flex:1;min-width:260px}"
   "#cam{width:100%;border-radius:6px;background:#222;min-height:180px;display:block}"
   ".bdg{display:inline-block;padding:2px 10px;border-radius:10px;font-size:.85em;font-weight:bold}"
-  ".kn{background:#d4edda;color:#155724}.un{background:#f8d7da;color:#721c24}"
-  ".no{background:#e2e3e5;color:#555}"
-  ".kp{background:#fff3cd;color:#856404}.up{background:#ffd8a8;color:#7d4e00}"
+  ".gr{background:#d4edda;color:#155724}.rd{background:#f8d7da;color:#721c24}"
+  ".yl{background:#fff3cd;color:#856404}.no{background:#e2e3e5;color:#555}"
+  ".kp{background:#cce5ff;color:#004085}.up{background:#ffd8a8;color:#7d4e00}"
   ".frl{list-style:none;padding:0;margin:8px 0}"
   ".frl li{padding:4px 0;border-bottom:1px solid #ddd;font-size:.9em}"
   "input[type=text]{width:100%;padding:7px;margin:6px 0;box-sizing:border-box;"
@@ -32,15 +33,22 @@ static const char DASHBOARD_HTML[] =
   "border-radius:4px;cursor:pointer;margin-right:4px}"
   "button:disabled{opacity:.5}.red{background:#dc3545}"
   "</style></head><body>"
-  "<h2>DualCam &mdash; %AGENT%</h2>"
-  "<nav><a href='/settings'>Settings</a> | <a href='/logout'>Logout</a></nav>"
+  "<h2>Agent 1 &mdash; %AGENT%</h2>"
+  "<nav>"
+  "<a href='/settings'>Settings</a> | "
+  "<a href='/log/door'>Door Log</a> | "
+  "<a href='/log/face'>Face Log</a> | "
+  "<a href='/log/alert'>Alert Log</a> | "
+  "<a href='/logout'>Logout</a>"
+  "</nav>"
   "<div class='row'>"
   "<div class='col'>"
-  "<div class='card'><div class='lbl'>State</div><div class='st' id='st'>&mdash;</div></div>"
+  "<div class='card'><div class='lbl'>Alert Level</div><span class='bdg no' id='al'>&mdash;</span></div>"
   "<div class='card'><div class='lbl'>Door</div><div id='door'>&mdash;</div></div>"
-  "<div id='hc' class='card hidden'><div class='lbl'>Hall Sensor</div><div id='hall'>&mdash;</div></div>"
-  "<div class='card'><div class='lbl'>Peer</div><div id='peer'>&mdash;</div></div>"
+  "<div class='card'><div class='lbl'>Agent 2</div><div id='a2'>&mdash;</div></div>"
+  "<div class='card'><div class='lbl'>Last Known User</div><div id='lku'>&mdash;</div></div>"
   "<div class='card'><div class='lbl'>Uptime</div><div id='up'>&mdash;</div></div>"
+  "<div class='card'><div class='lbl'>Hall Sensor</div><div id='hall'>&mdash;</div></div>"
   "</div>"
   "<div class='col'>"
   "<div class='card'><div class='lbl'>Camera Preview</div>"
@@ -48,8 +56,7 @@ static const char DASHBOARD_HTML[] =
   "<div style='margin-top:8px;display:flex;gap:16px;flex-wrap:wrap'>"
   "<div><div class='lbl'>Now</div><span id='raw' class='bdg no'>&mdash;</span></div>"
   "<div><div class='lbl'>Vote</div><span id='badge' class='bdg no'>&mdash;</span></div>"
-  "</div>"
-  "</div>"
+  "</div></div>"
   "</div>"
   "</div>"
   "<div class='card'>"
@@ -67,30 +74,34 @@ static const char DASHBOARD_HTML[] =
   "return Math.floor(s/3600)+'h '+Math.floor(s%3600/60)+'m '+s%60+'s';}"
   "function poll(){"
   "fetch('/api/status').then(r=>r.json()).then(d=>{"
-  "document.getElementById('st').textContent=d.state||'?';"
-  "document.getElementById('door').textContent=d.door||'?';"
-  "document.getElementById('peer').textContent=d.peer_online?(d.peer_state||'?'):'offline';"
+  "var al=document.getElementById('al');"
+  "if(d.alert_level==='ALERT_RED'){al.className='bdg rd';al.textContent='RED'+(d.alarm_active?' ⚠️ ALARM':' ●');}"
+  "else if(d.alert_level==='ALERT_YELLOW'){al.className='bdg yl';al.textContent='YELLOW ●';}"
+  "else{al.className='bdg gr';al.textContent='GREEN ●';}"
+  "document.getElementById('door').textContent=d.door_state||'?';"
+  "var a2=document.getElementById('a2');"
+  "a2.textContent=d.agent2_online?('Online · '+(d.presence_state||'?')):'Offline';"
+  "a2.style.color=d.agent2_online?'#155724':'#721c24';"
+  "document.getElementById('lku').textContent=d.last_known_user||'—';"
   "document.getElementById('up').textContent=fmt(d.uptime||0);"
-  "if(d.hall_raw!==undefined){"
-  "document.getElementById('hc').classList.remove('hidden');"
-  "document.getElementById('hall').textContent='raw: '+d.hall_raw+' / threshold: '+d.hall_threshold;}"
+  "document.getElementById('hall').textContent='raw: '+d.hall_raw+' / threshold: '+d.hall_threshold;"
   "if(d.face_count!==undefined)document.getElementById('fc').textContent=d.face_count;"
   "var r=document.getElementById('raw');"
-  "if(d.face_result==='KNOWN'){r.className='bdg kn';"
+  "if(d.face_result==='KNOWN'){r.className='bdg gr';"
   "r.textContent=(d.face_name||'Known')+(d.face_sim>0?' · '+d.face_sim.toFixed(3):'');}"
-  "else if(d.face_result==='UNKNOWN'){r.className='bdg un';"
+  "else if(d.face_result==='UNKNOWN'){r.className='bdg rd';"
   "r.textContent='Unknown'+(d.face_tex>0?' · tex:'+d.face_tex.toFixed(1):'');}"
   "else if(d.face_result==='DETECTED'){r.className='bdg no';r.textContent='Detected';}"
   "else{r.className='bdg no';r.textContent='—';}"
   "var b=document.getElementById('badge'),fv=d.face_voter_state;"
-  "if(fv==='known_confirmed'){b.className='bdg kn';"
+  "if(fv==='known_confirmed'){b.className='bdg gr';"
   "b.textContent=d.face_voter_confirmed_name||d.face_name||'Known';}"
   "else if(fv==='unknown_pending'){b.className='bdg up';"
-  "b.textContent='Detecting… '+d.face_voter_unknown_elapsed_s+'s/'+d.face_voter_unknown_window_s+'s · '+d.face_voter_unknown_hits+' hits';}"
+  "b.textContent='Unknown… '+d.face_voter_unknown_elapsed_s+'s/'+d.face_voter_unknown_window_s+'s · '+d.face_voter_unknown_hits+' hits';}"
   "else if(fv==='known_pending'){b.className='bdg kp';"
   "b.textContent='Known? '+(d.face_name?d.face_name+' ':'')+d.face_voter_known_count+'/'+d.face_voter_known_min+' hits';}"
-  "else if(d.face_result==='KNOWN'){b.className='bdg kn';b.textContent=d.face_name||'Known';}"
-  "else if(d.face_result==='UNKNOWN'){b.className='bdg un';b.textContent='Unknown';}"
+  "else if(d.face_result==='KNOWN'){b.className='bdg gr';b.textContent=d.face_name||'Known';}"
+  "else if(d.face_result==='UNKNOWN'){b.className='bdg rd';b.textContent='Unknown';}"
   "else if(d.face_result==='DETECTED'){b.className='bdg no';b.textContent='Detected';}"
   "else{b.className='bdg no';b.textContent='—';}"
   "}).catch(()=>{});"
@@ -130,8 +141,8 @@ static const char DASHBOARD_HTML[] =
 
 static const char SETTINGS_HTML[] =
   "<!DOCTYPE html><html><head>"
-  "<meta charset='utf-8'><title>Settings - DualCam</title>"
-  "<style>body{font-family:sans-serif;max-width:500px;margin:20px auto;padding:20px}"
+  "<meta charset='utf-8'><title>Settings - Agent 1</title>"
+  "<style>body{font-family:sans-serif;max-width:520px;margin:20px auto;padding:20px}"
   "fieldset{border:1px solid #ddd;border-radius:6px;padding:12px;margin:12px 0}"
   "legend{font-weight:bold}"
   "input{width:100%;padding:8px;margin:6px 0;box-sizing:border-box}"
@@ -153,13 +164,24 @@ static const char SETTINGS_HTML[] =
   "<input name='discord_url' maxlength='256' "
   "placeholder='https://discord.com/api/webhooks/...' value='%DISCORD_URL%'></label>"
   "</fieldset>"
-  "%HALL_FIELD%"
+  "<fieldset><legend>MQTT Broker</legend>"
+  "<label>Broker IP / Hostname<br>"
+  "<input name='mqtt_broker' maxlength='63' placeholder='192.168.x.x' value='%MQTT_BROKER%'></label>"
+  "<label>Port<br>"
+  "<input type='number' name='mqtt_port' min='1' max='65535' value='%MQTT_PORT%'></label>"
+  "</fieldset>"
+  "<fieldset><legend>Hall Sensor Threshold</legend>"
+  "<label>Threshold (0-4095)<br>"
+  "<input type='number' name='hall_threshold' min='0' max='4095' value='%HALL_THRESH%'></label>"
+  "<p style='font-size:.8em;color:#666'>Current raw: %HALL_RAW% &mdash; "
+  "set between closed and open readings.</p>"
+  "</fieldset>"
   "<button>Save</button>"
   "</form></body></html>";
 
 static const char PWCHANGE_HTML[] =
   "<!DOCTYPE html><html><head>"
-  "<meta charset='utf-8'><title>Set Password - DualCam</title>"
+  "<meta charset='utf-8'><title>Set Password - Agent 1</title>"
   "<style>body{font-family:sans-serif;max-width:400px;margin:60px auto;padding:20px}"
   "input{width:100%;padding:8px;margin:6px 0;box-sizing:border-box}"
   "button{width:100%;padding:10px;background:#0070f3;color:#fff;border:none;cursor:pointer}"
@@ -176,15 +198,37 @@ static const char PWCHANGE_HTML[] =
   "<button>Set Password</button>"
   "</form></body></html>";
 
+static const char LOG_HTML[] =
+  "<!DOCTYPE html><html><head>"
+  "<meta charset='utf-8'><title>%TITLE% - Agent 1</title>"
+  "<style>body{font-family:sans-serif;max-width:900px;margin:20px auto;padding:20px}"
+  "table{width:100%;border-collapse:collapse;font-size:.9em}"
+  "th,td{padding:8px;text-align:left;border-bottom:1px solid #ddd}"
+  "th{background:#f5f5f5;font-weight:bold}"
+  "a{color:#0070f3}"
+  "</style></head><body>"
+  "<h2>%TITLE%</h2>"
+  "<nav><a href='/dashboard'>&larr; Dashboard</a></nav>"
+  "<div id='tbl'><p>Loading...</p></div>"
+  "<script>"
+  "function esc(v){return String(v===null||v===undefined?'':v)"
+  ".replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;');}"
+  "fetch('%API%').then(r=>r.json()).then(function(d){"
+  "if(!d.length){document.getElementById('tbl').innerHTML='<p>No entries.</p>';return;}"
+  "var keys=Object.keys(d[0]);"
+  "var h='<table><tr>'+keys.map(k=>'<th>'+esc(k)+'</th>').join('')+'</tr>';"
+  "d.forEach(function(row){"
+  "h+='<tr>'+keys.map(k=>'<td>'+esc(row[k])+'</td>').join('')+'</tr>';});"
+  "document.getElementById('tbl').innerHTML=h+'</table>';"
+  "}).catch(function(){document.getElementById('tbl').innerHTML='<p>Failed to load.</p>';});"
+  "</script></body></html>";
+
 // ── Module-level state ────────────────────────────────────────────────────────
 
-static DoorStateMachine* _sm            = nullptr;
-static const char*       _agentLabel    = nullptr;
-static PeerStatus*       _cachedPeer    = nullptr;
-static bool*             _doorOpen      = nullptr;
-static uint16_t*         _hallRaw       = nullptr;
-static uint16_t*         _hallThreshold = nullptr;
-static FaceVoter*        _faceVoter     = nullptr;
+static SecurityStateMachine* _sm         = nullptr;
+static const char*           _agentLabel = nullptr;
+static FaceVoter*            _faceVoter  = nullptr;
+static LogManager*           _logManager = nullptr;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -229,20 +273,14 @@ static bool requireAuthAndChangedPassword(WebServer& server) {
 // ── Public API ────────────────────────────────────────────────────────────────
 
 void DashboardServer::begin(WebServer& server,
-                             DoorStateMachine& sm,
+                             SecurityStateMachine& sm,
                              const char* agentLabel,
-                             PeerStatus* cachedPeer,
-                             bool* doorOpen,
-                             uint16_t* hallRaw,
-                             uint16_t* hallThreshold,
-                             FaceVoter* faceVoter) {
-  _sm            = &sm;
-  _agentLabel    = agentLabel;
-  _cachedPeer    = cachedPeer;
-  _doorOpen      = doorOpen;
-  _hallRaw       = hallRaw;
-  _hallThreshold = hallThreshold;
-  _faceVoter     = faceVoter;
+                             FaceVoter* faceVoter,
+                             LogManager* logManager) {
+  _sm         = &sm;
+  _agentLabel = agentLabel;
+  _faceVoter  = faceVoter;
+  _logManager = logManager;
 
   // Root → dashboard
   server.on("/", HTTP_GET, [&server]() {
@@ -250,7 +288,6 @@ void DashboardServer::begin(WebServer& server,
     server.send(302, "text/plain", "");
   });
 
-  // Suppress browser auto-request log noise
   server.on("/favicon.ico", HTTP_GET, [&server]() {
     server.send(204, "text/plain", "");
   });
@@ -270,27 +307,19 @@ void DashboardServer::begin(WebServer& server,
     if (!requireAuthAndChangedPassword(server)) return;
 
     JsonDocument doc;
-    doc["state"]  = stateToString(_sm->getState());
-    doc["door"]   = _doorOpen ? (*_doorOpen ? "open" : "closed") : "n/a";
-    doc["uptime"] = millis();
+    doc["alert_level"]     = alertLevelToString(_sm->getAlertLevel());
+    doc["door_state"]      = doorStateToString(_sm->getDoorState());
+    doc["agent2_online"]   = _sm->isAgent2Online();
+    doc["alarm_active"]    = _sm->isAlarmActive();
+    doc["last_known_user"] = _sm->getLastKnownUser();
+    doc["presence_state"]  = "";   // updated by AgentComm callback; reflected via sm
+    doc["uptime"]          = millis();
+    doc["hall_raw"]        = DoorSensor::getRaw();
+    doc["hall_threshold"]  = SettingsStore::getHallThreshold();
+    doc["face_count"]      = FaceRecognizer::count();
+    doc["face_max"]        = FaceRecognizer::MAX_FACES;
 
-    if (_cachedPeer) {
-      doc["peer_online"] = _cachedPeer->online;
-      doc["peer_state"]  = stateToString(_cachedPeer->state);
-    } else {
-      doc["peer_online"] = false;
-      doc["peer_state"]  = "unknown";
-    }
-
-    if (_hallRaw) {
-      doc["hall_raw"]       = *_hallRaw;
-      doc["hall_threshold"] = SettingsStore::getHallThreshold();
-    }
-
-    doc["face_count"] = FaceRecognizer::count();
-    doc["face_max"]   = FaceRecognizer::MAX_FACES;
-
-    // Recognition result — only report if a face was seen within FACE_RECENT_MS
+    // Recognition result (only within FACE_RECENT_MS)
     FaceResult fr = FaceResult::NONE;
     if (CameraAgent::isInitialized()) {
       unsigned long sinceDetect = millis() - CameraAgent::lastDetectedMs();
@@ -298,24 +327,17 @@ void DashboardServer::begin(WebServer& server,
         fr = CameraAgent::lastRawResult();
       }
     }
-    if (fr == FaceResult::KNOWN) {
-      doc["face_result"] = "KNOWN";
-    } else if (fr == FaceResult::UNKNOWN) {
-      doc["face_result"] = "UNKNOWN";
-    } else if (fr == FaceResult::DETECTED) {
-      doc["face_result"] = "DETECTED";
-    } else {
-      doc["face_result"] = "NONE";
-    }
-    // Always include last matched name so known_pending badge can show who it is
+    doc["face_result"] = (fr == FaceResult::KNOWN)    ? "KNOWN"    :
+                         (fr == FaceResult::UNKNOWN)   ? "UNKNOWN"  :
+                         (fr == FaceResult::DETECTED)  ? "DETECTED" : "NONE";
     {
-      const char* fname = FaceRecognizer::getLastMatchName();
-      doc["face_name"] = fname ? fname : "";
+      const char* fn = FaceRecognizer::getLastMatchName();
+      doc["face_name"] = fn ? fn : "";
     }
     doc["face_sim"] = FaceRecognizer::getLastSim();
     doc["face_tex"] = FaceRecognizer::getLastTex();
 
-    // FaceVoter state — outdoor only; indoor passes nullptr
+    // FaceVoter state
     if (_faceVoter) {
       FaceVoterStatus fvs = _faceVoter->getStatus(millis());
       const char* voterState;
@@ -338,25 +360,58 @@ void DashboardServer::begin(WebServer& server,
     server.send(200, "application/json", json);
   });
 
+  // ── Log API ─────────────────────────────────────────────────────────────────
+  server.on("/api/log/door", HTTP_GET, [&server]() {
+    if (!requireAuthAndChangedPassword(server)) return;
+    server.send(200, "application/json", _logManager ? _logManager->getDoorLogJson() : "[]");
+  });
+
+  server.on("/api/log/face", HTTP_GET, [&server]() {
+    if (!requireAuthAndChangedPassword(server)) return;
+    server.send(200, "application/json", _logManager ? _logManager->getFaceLogJson() : "[]");
+  });
+
+  server.on("/api/log/alert", HTTP_GET, [&server]() {
+    if (!requireAuthAndChangedPassword(server)) return;
+    server.send(200, "application/json", _logManager ? _logManager->getAlertLogJson() : "[]");
+  });
+
+  // ── Log pages ───────────────────────────────────────────────────────────────
+  server.on("/log/door", HTTP_GET, [&server]() {
+    if (!requireAuthAndChangedPassword(server)) return;
+    String page = LOG_HTML;
+    page.replace("%TITLE%", "Door Log");
+    page.replace("%API%",   "/api/log/door");
+    server.send(200, "text/html", page);
+  });
+
+  server.on("/log/face", HTTP_GET, [&server]() {
+    if (!requireAuthAndChangedPassword(server)) return;
+    String page = LOG_HTML;
+    page.replace("%TITLE%", "Face Log");
+    page.replace("%API%",   "/api/log/face");
+    server.send(200, "text/html", page);
+  });
+
+  server.on("/log/alert", HTTP_GET, [&server]() {
+    if (!requireAuthAndChangedPassword(server)) return;
+    String page = LOG_HTML;
+    page.replace("%TITLE%", "Alert Log");
+    page.replace("%API%",   "/api/log/alert");
+    server.send(200, "text/html", page);
+  });
+
   // ── Settings page ───────────────────────────────────────────────────────────
   server.on("/settings", HTTP_GET, [&server]() {
     if (!requireAuthAndChangedPassword(server)) return;
     String page = SETTINGS_HTML;
-    page.replace("%MSG%", "");
-    page.replace("%CSRF%", SessionAuth::getCsrfToken());
+    page.replace("%MSG%",         "");
+    page.replace("%CSRF%",        SessionAuth::getCsrfToken());
     page.replace("%DISCORD_URL%", htmlAttrEscape(SettingsStore::getDiscordUrl()));
-    if (_hallRaw) {
-      String hf = "<fieldset><legend>Hall Sensor Threshold</legend>"
-                  "<label>Threshold (0-4095)<br>"
-                  "<input type='number' name='hall_threshold' min='0' max='4095' value='";
-      hf += SettingsStore::getHallThreshold();
-      hf += "'></label><p style='font-size:.8em;color:#666'>"
-            "Current raw: " + String(*_hallRaw) + " &mdash; "
-            "set between closed and open readings.</p></fieldset>";
-      page.replace("%HALL_FIELD%", hf);
-    } else {
-      page.replace("%HALL_FIELD%", "");
-    }
+    page.replace("%MQTT_BROKER%", htmlAttrEscape(ConfigManager::getMqttBroker()));
+    page.replace("%MQTT_PORT%",   String(ConfigManager::getMqttPort()));
+    page.replace("%HALL_THRESH%", String(SettingsStore::getHallThreshold()));
+    page.replace("%HALL_RAW%",    String(DoorSensor::getRaw()));
     server.send(200, "text/html", page);
   });
 
@@ -369,10 +424,10 @@ void DashboardServer::begin(WebServer& server,
     }
 
     String msg;
-    String newPw      = server.arg("newpw");
-    String confirmPw  = server.arg("confirmpw");
-    String discordUrl = server.arg("discord_url");
 
+    // Password change
+    String newPw     = server.arg("newpw");
+    String confirmPw = server.arg("confirmpw");
     if (newPw.length() > 0) {
       if (newPw != confirmPw) {
         msg += "<p class='err'>Passwords do not match.</p>";
@@ -383,22 +438,36 @@ void DashboardServer::begin(WebServer& server,
       }
     }
 
-    // Empty discord_url field = clear; non-empty = validate and save
+    // Discord URL
     if (server.hasArg("discord_url")) {
-      if (discordUrl.length() == 0) {
+      String url = server.arg("discord_url");
+      if (url.length() == 0) {
         SettingsStore::setDiscordUrl("");
-      } else if (!SettingsStore::setDiscordUrl(discordUrl)) {
-        msg += "<p class='err'>Invalid Discord URL (must start with "
-               "https://discord.com/api/webhooks/).</p>";
+      } else if (!SettingsStore::setDiscordUrl(url)) {
+        msg += "<p class='err'>Invalid Discord URL.</p>";
       } else {
-        if (msg.indexOf("err") < 0) msg += "<p class='ok'>Discord URL saved.</p>";
+        msg += "<p class='ok'>Discord URL saved.</p>";
       }
     }
 
-    // Hall threshold (indoor only) — validate before saving
-    if (_hallRaw && server.hasArg("hall_threshold")) {
+    // MQTT broker
+    if (server.hasArg("mqtt_broker")) {
+      String broker = server.arg("mqtt_broker");
+      broker.trim();
+      String portStr = server.arg("mqtt_port");
+      uint16_t port  = (uint16_t)portStr.toInt();
+      if (port == 0) port = MQTT_DEFAULT_PORT;
+      if (!ConfigManager::save(broker, port)) {
+        msg += "<p class='err'>Failed to save MQTT settings.</p>";
+      } else {
+        msg += "<p class='ok'>MQTT settings saved (restart to apply).</p>";
+      }
+    }
+
+    // Hall threshold
+    if (server.hasArg("hall_threshold")) {
       String hallArg = server.arg("hall_threshold");
-      bool numeric = hallArg.length() > 0;
+      bool numeric   = hallArg.length() > 0;
       for (size_t i = 0; i < hallArg.length() && numeric; i++) {
         if (!isdigit((unsigned char)hallArg[i])) numeric = false;
       }
@@ -411,32 +480,24 @@ void DashboardServer::begin(WebServer& server,
                  String(HALL_HYSTERESIS + 1) + " and " +
                  String(4095 - HALL_HYSTERESIS) + ".</p>";
         } else {
-          if (_hallThreshold) *_hallThreshold = (uint16_t)val;  // update runtime value immediately
+          DoorSensor::setThreshold((uint16_t)val);
           msg += "<p class='ok'>Hall threshold saved.</p>";
         }
       }
     }
 
     String page = SETTINGS_HTML;
-    page.replace("%MSG%",        msg);
-    page.replace("%CSRF%",       SessionAuth::getCsrfToken());
+    page.replace("%MSG%",         msg);
+    page.replace("%CSRF%",        SessionAuth::getCsrfToken());
     page.replace("%DISCORD_URL%", htmlAttrEscape(SettingsStore::getDiscordUrl()));
-    if (_hallRaw) {
-      String hf = "<fieldset><legend>Hall Sensor Threshold</legend>"
-                  "<label>Threshold (0-4095)<br>"
-                  "<input type='number' name='hall_threshold' min='0' max='4095' value='";
-      hf += SettingsStore::getHallThreshold();
-      hf += "'></label><p style='font-size:.8em;color:#666'>"
-            "Current raw: " + String(*_hallRaw) + " &mdash; "
-            "set between closed and open readings.</p></fieldset>";
-      page.replace("%HALL_FIELD%", hf);
-    } else {
-      page.replace("%HALL_FIELD%", "");
-    }
+    page.replace("%MQTT_BROKER%", htmlAttrEscape(ConfigManager::getMqttBroker()));
+    page.replace("%MQTT_PORT%",   String(ConfigManager::getMqttPort()));
+    page.replace("%HALL_THRESH%", String(SettingsStore::getHallThreshold()));
+    page.replace("%HALL_RAW%",    String(DoorSensor::getRaw()));
     server.send(200, "text/html", page);
   });
 
-  // ── Forced password change ──────────────────────────────────────────────────
+  // ── Password change pages ───────────────────────────────────────────────────
   server.on("/password/change", HTTP_GET, [&server]() {
     if (!requireAuth(server)) return;
     String page = PWCHANGE_HTML;
@@ -451,10 +512,8 @@ void DashboardServer::begin(WebServer& server,
       server.send(403, "text/plain", "CSRF validation failed.");
       return;
     }
-
     String newPw     = server.arg("newpw");
     String confirmPw = server.arg("confirmpw");
-
     if (newPw != confirmPw) {
       String page = PWCHANGE_HTML;
       page.replace("%ERR%",  "<p class='err'>Passwords do not match.</p>");
@@ -462,7 +521,6 @@ void DashboardServer::begin(WebServer& server,
       server.send(200, "text/html", page);
       return;
     }
-
     if (!SettingsStore::setDashboardPassword(newPw)) {
       String page = PWCHANGE_HTML;
       page.replace("%ERR%",  "<p class='err'>Password must be 8-64 characters.</p>");
@@ -470,7 +528,6 @@ void DashboardServer::begin(WebServer& server,
       server.send(200, "text/html", page);
       return;
     }
-
     server.sendHeader("Location", "/dashboard");
     server.send(302, "text/plain", "");
   });
@@ -492,7 +549,6 @@ void DashboardServer::begin(WebServer& server,
     }
     String name = server.arg("name");
     name.trim();
-    // Allow printable ASCII only; strip control characters and non-ASCII bytes
     String sanitized;
     for (size_t i = 0; i < name.length() && (int)sanitized.length() < FaceRecognizer::MAX_NAME_LEN; i++) {
       char c = name[i];
@@ -528,11 +584,11 @@ void DashboardServer::begin(WebServer& server,
       server.send(403, "application/json", "{\"error\":\"CSRF\"}");
       return;
     }
-    CameraAgent::cancelEnroll();  // abort any pending enroll before clearing
+    CameraAgent::cancelEnroll();
     bool ok = FaceRecognizer::clearAll();
     JsonDocument doc;
     doc["cleared"] = ok;
-    if (!ok) doc["error"] = "NVS write failed — reboot may restore old faces";
+    if (!ok) doc["error"] = "NVS write failed";
     String json;
     serializeJson(doc, json);
     server.send(ok ? 200 : 500, "application/json", json);

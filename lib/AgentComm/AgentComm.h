@@ -1,0 +1,46 @@
+#pragma once
+#include <Arduino.h>
+#include <PubSubClient.h>
+#include "states.h"
+
+// MQTT communication layer for Agent 1.
+//
+// Publishes security events and subscribes to Agent 2 presence and alarm decisions.
+// Reconnects automatically every MQTT_RECONNECT_MS when disconnected.
+// Re-subscribes immediately after each successful reconnect.
+//
+// If broker IP is empty (""), begin() is a no-op and isConnected() returns false.
+// In that case the system defaults to ALERT_RED (Agent 2 considered offline).
+class AgentComm {
+public:
+  // Call once after WiFi is connected.
+  // clientId: unique MQTT client identifier (e.g., "agent1").
+  static void begin(const char* broker, uint16_t port, const char* clientId = "agent1");
+
+  // Call every loop() iteration: runs PubSubClient::loop() and reconnect logic.
+  static void tick();
+
+  // ── Publish ───────────────────────────────────────────────────────────────
+  static bool publishDoor(DoorState state, const char* relatedUser = nullptr);
+  static bool publishFace(const char* userName, float similarity);
+  static bool publishAlert(AlertLevel level, const char* alertType);
+  static bool publishStatus(AlertLevel level, unsigned long uptime);
+
+  // ── Subscribe callbacks (set before begin()) ──────────────────────────────
+  // Called when a valid presence message arrives from Agent 2.
+  static void setOnPresence(void (*cb)(bool occupied, int score));
+
+  // Called when a valid alarm_decision message arrives from Agent 2.
+  static void setOnAlarmDecision(void (*cb)(AlarmDecision decision));
+
+  // Called when MQTT connection state changes (online = true/false).
+  // Use to update SecurityStateMachine::onAgent2Online().
+  static void setOnConnectionChange(void (*cb)(bool connected));
+
+  static bool isConnected();
+
+private:
+  static void _onMessage(const char* topic, byte* payload, unsigned int len);
+  static void _reconnect();
+  static bool _publish(const char* topic, const String& payload);
+};

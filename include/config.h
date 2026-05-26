@@ -1,54 +1,53 @@
 #pragma once
 
 // mDNS hostnames — devices get IPs via DHCP, peer discovery via .local names
-#define MDNS_INDOOR        "indoor-agent"   // reachable as indoor-agent.local
-#define MDNS_OUTDOOR       "outdoor-agent"  // reachable as outdoor-agent.local
+#define MDNS_AGENT1        "agent1"    // this device: agent1.local
+#define MDNS_AGENT2        "agent2"    // peer device: agent2.local
 
 // HTTP
 #define HTTP_PORT          80
-
-// State machine timing (milliseconds)
-#define FACE_RECENT_MS         10000UL
-#define UNKNOWN_VISITOR_MS     15000UL
-#define DOOR_DEBOUNCE_MS         200UL
-#define DOOR_TRANSITION_MS     30000UL
 
 // WiFi / Config Portal
 #define WIFI_CONNECT_TIMEOUT_MS  15000UL  // STA connect attempt before fallback to portal
 #define PORTAL_TIMEOUT_MS       300000UL  // 5 min: no POST → restart
 #define WIFI_LOST_TIMEOUT_MS    300000UL  // 5 min disconnected in loop() → restart to portal
 
-// Serial 'W' command clears WiFi credentials. A hardware BOOT button is NOT used because
-// GPIO 0 doubles as CAM_XCLK on the NMK99 — driving it LOW would corrupt the camera clock.
-
-// Peer polling
+// Peer polling (legacy HTTP fallback; primary comm is MQTT)
 #define PEER_QUERY_INTERVAL_MS    5000UL
+
+// MQTT
+#define MQTT_DEFAULT_PORT         1883
+#define MQTT_RECONNECT_MS         5000UL  // retry interval when disconnected
+#define MQTT_KEEPALIVE_S            60
+#define AGENT2_OFFLINE_TIMEOUT_MS 15000UL // no presence message within → Agent 2 offline
 
 // Dashboard session
 #define DASHBOARD_SESSION_TTL_MS 1800000UL  // 30 min inactivity
 
-// Hall-effect door sensor (indoor only)
+// Hall-effect door sensor
 #define HALL_DEFAULT_THRESHOLD    2048    // mid-scale starting point; calibrate with 'H' key
-#define HALL_HYSTERESIS            150    // dead-zone on each side of threshold (±0-4095 scale)
+#define HALL_HYSTERESIS            150    // dead-zone on each side of threshold (±0–4095 scale)
 #define HALL_SAMPLE_INTERVAL_MS     50UL  // analog read rate
+#define DOOR_DEBOUNCE_MS           200UL  // require stable state for this long before firing
+
+// Face detection timing
+#define FACE_RECENT_MS           10000UL  // face seen within this window → report as active
 
 // Camera Agent
 #define CAMERA_DETECT_INTERVAL_MS   500UL   // face detection rate (twice per second)
 
-// Face Recognition (Phase 5)
-// Enrollment window: if no face is detected within this period after scheduleEnroll(),
+// Face Recognition
+// Enrollment window: if no face detected within this period after scheduleEnroll(),
 // the pending enrollment is automatically cancelled.
 #define CAMERA_ENROLL_TIMEOUT_MS  10000UL
-// Cosine similarity threshold: above = KNOWN. Features are L2-normalized
-// block-luminance vectors; re-enroll if lighting conditions change significantly.
+// Cosine similarity threshold: above = KNOWN.
 #define FACE_SIMILARITY_THRESHOLD  0.92f
-// Minimum mean block-stddev (pre-normalization) required before matching.
+// Minimum mean block-stddev before matching.
 // Uniform scenes (ceiling, wall) have near-zero texture and are rejected.
-// Observed face tex: 30-44; observe [FaceRecognizer] UNKNOWN (tex=X) to calibrate.
 #define FACE_TEXTURE_MIN_STDDEV   20.0f
 
 // Discord Notifier
-#define DISCORD_RATE_LIMIT_MS    30000UL    // min interval between same-state alerts
+#define DISCORD_RATE_LIMIT_MS    30000UL    // min interval between same-event alerts
 #define DISCORD_TIMEOUT_MS        5000UL    // connect + read timeout
 #define DISCORD_FAIL_COOLDOWN_MS 300000UL   // 5 min after network error
 
@@ -56,9 +55,9 @@
 #define LOGIN_LOCKOUT_MS         60000UL    // lockout duration after max fails
 #define LOGIN_MAX_FAILS               5
 
-// Face Vote Window (outdoor agent)
-#define FACE_VOTE_WINDOW_MS          10000UL  // min elapsed time (ms) for UNKNOWN_CONFIRMED
-#define FACE_VOTE_IDLE_MS             5000UL  // no face for this long silently resets the voter
+// Face Vote Window
+#define FACE_VOTE_WINDOW_MS          10000UL  // min elapsed time for UNKNOWN_CONFIRMED
+#define FACE_VOTE_IDLE_MS             5000UL  // no face for this long silently resets voter
 #define FACE_VOTE_KNOWN_MIN               3   // KNOWN hits required within one burst window
 #define FACE_VOTE_KNOWN_WINDOW_MS     8000UL  // burst window for KNOWN hit accumulation
-#define FACE_VOTE_UNKNOWN_MIN_HITS       10   // min UNKNOWN frame hits required for UNKNOWN_CONFIRMED
+#define FACE_VOTE_UNKNOWN_MIN_HITS       10   // min UNKNOWN frame hits for UNKNOWN_CONFIRMED

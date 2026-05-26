@@ -5,7 +5,11 @@ VoteResult FaceVoter::update(FaceResult raw, unsigned long rawMs, unsigned long 
   if (rawMs == _lastSampleMs) return VoteResult::NONE;
   _lastSampleMs = rawMs;
 
-  const bool facePresent = (raw == FaceResult::KNOWN || raw == FaceResult::UNKNOWN);
+  // DETECTED = face found but no enrolled faces to match — treat as UNKNOWN for voting.
+  // Without this, an un-enrolled visitor can never trigger UNKNOWN_CONFIRMED.
+  const bool facePresent = (raw == FaceResult::KNOWN ||
+                            raw == FaceResult::UNKNOWN ||
+                            raw == FaceResult::DETECTED);
 
   if (!facePresent) {
     if (_active && (now - _lastFaceMs >= FACE_VOTE_IDLE_MS)) {
@@ -46,7 +50,7 @@ VoteResult FaceVoter::update(FaceResult raw, unsigned long rawMs, unsigned long 
     }
     // Single KNOWN hits (below threshold) do not clear the UNKNOWN timer to
     // prevent false-known events from suppressing unknown-visitor alerts.
-  } else {  // UNKNOWN
+  } else {  // UNKNOWN or DETECTED (unmatched face, including no-enrollment case)
     if (!_knownConfirmed) {
       if (_unknownStartMs == 0) _unknownStartMs = now;
       _unknownHits++;

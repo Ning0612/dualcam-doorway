@@ -5,9 +5,10 @@
 #include "img_converters.h"
 
 // ── AI Thinker / NMK99 pin map ────────────────────────────────────────────────
-// GPIO 32 is camera PWDN — must NOT be used as PIN_BUZZER when camera is active.
-// GPIO 34 is CAM_D6 — must NOT be used as PIN_DOOR when camera is active.
-#define CAM_PWDN   32
+// GPIO 25 = CAM_VSYNC, GPIO 26 = CAM_SIOD, GPIO 27 = CAM_SIOC:
+//   must NOT be used for LED, buzzer, or any other output while camera is active.
+// GPIO 32 = CAM_PWDN: held LOW keeps camera powered; set to -1 if PWDN is not wired.
+#define CAM_PWDN   -1   // NMK99: PWDN not wired; GPIO 32 used for WS2812B LED data
 #define CAM_RESET  -1
 #define CAM_XCLK    0
 #define CAM_SIOD   26

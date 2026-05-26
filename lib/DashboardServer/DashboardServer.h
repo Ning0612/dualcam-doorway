@@ -1,24 +1,18 @@
 #pragma once
 #include <Arduino.h>
 #include <WebServer.h>
-#include "AgentProtocol.h"  // for PeerStatus
-#include "FaceVoter.h"      // for FaceVoter* (outdoor only; nullptr for indoor)
-
-class DoorStateMachine;
+#include "SecurityStateMachine.h"
+#include "FaceVoter.h"
+#include "LogManager.h"
 
 class DashboardServer {
 public:
   // Register all dashboard routes on server.
-  // doorOpen:  pointer to door state bool (indoor only); nullptr for outdoor.
-  // hallRaw:   pointer to latest raw Hall ADC reading (indoor only); nullptr for outdoor.
-  // hallThreshold: pointer to runtime threshold in indoor_main; updated in-place on save.
-  // faceVoter: pointer to the FaceVoter instance (outdoor only); nullptr for indoor.
+  // faceVoter:  pointer to the FaceVoter instance; may not be nullptr.
+  // logManager: pointer to the LogManager instance; may not be nullptr.
   static void begin(WebServer& server,
-                    DoorStateMachine& sm,
+                    SecurityStateMachine& sm,
                     const char* agentLabel,
-                    PeerStatus* cachedPeer,
-                    bool* doorOpen       = nullptr,
-                    uint16_t* hallRaw    = nullptr,
-                    uint16_t* hallThreshold = nullptr,
-                    FaceVoter* faceVoter = nullptr);
+                    FaceVoter* faceVoter,
+                    LogManager* logManager);
 };

@@ -3,16 +3,16 @@
 #include "states.h"
 
 // Compile-time TLS flags (define in platformio.ini build_flags):
-//   DISCORD_TLS_INSECURE   — skip TLS verification; development/testing only, NOT for production
+//   DISCORD_TLS_INSECURE   — skip TLS verification; development/testing only
 //   DISCORD_ROOT_CA_CERT   — define as a PEM string to enable CA verification
 // If neither is defined the build will fail with a descriptive error.
 
 class DiscordNotifier {
 public:
   // Send a Discord webhook notification.
-  // forState: the SystemState being reported (used for per-state rate limiting).
+  // event: the AlertEvent being reported (used for per-event rate limiting).
   // Returns true on success; false on rate-limit, cooldown, invalid URL, or error.
-  static bool notify(const String& webhookUrl, SystemState forState,
+  static bool notify(const String& webhookUrl, AlertEvent event,
                      const String& message);
 
   // One-shot startup notification (e.g., boot IP announcement).
@@ -21,8 +21,14 @@ public:
   static bool notifyBoot(const String& webhookUrl, const String& message);
 
 private:
-  static unsigned long _lastNotifyMs[9];   // indexed by (int)SystemState
-  static unsigned long _failCooldownUntil;
+  // Array size must equal the number of AlertEvent values.
+  // If a new AlertEvent is added, increase this constant and update the array.
+  static constexpr int ALERT_EVENT_COUNT = 3;  // UNKNOWN_VISITOR, USER_RETURNED, BOOT
+  static_assert(static_cast<int>(AlertEvent::BOOT) + 1 == ALERT_EVENT_COUNT,
+                "DiscordNotifier: _lastNotifyMs size out of sync with AlertEvent enum");
+
+  static unsigned long _lastNotifyMs[ALERT_EVENT_COUNT];
+  static unsigned long _failCooldownStartMs;  // 0 = not in cooldown; rollover-safe via elapsed check
 
   static bool _isValidUrl(const String& url);
 };

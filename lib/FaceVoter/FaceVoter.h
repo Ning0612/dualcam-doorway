@@ -1,8 +1,7 @@
 #pragma once
 #include <Arduino.h>
-#include "CameraAgent.h"
-
-enum class VoteResult { NONE, KNOWN_CONFIRMED, UNKNOWN_CONFIRMED };
+#include "states.h"    // VoteResult, FaceState
+#include "CameraAgent.h"  // FaceResult
 
 // Snapshot of FaceVoter internal state for dashboard reporting.
 struct FaceVoterStatus {
@@ -35,7 +34,7 @@ struct FaceVoter {
   void            reset();
   bool            isActive() const { return _active; }
   FaceVoterStatus getStatus(unsigned long now) const;
-  // Call from outdoor_main when VoteResult::KNOWN_CONFIRMED is returned, passing
+  // Call from main.cpp when VoteResult::KNOWN_CONFIRMED is returned, passing
   // FaceRecognizer::getLastMatchName() so the name is preserved through later UNKNOWN frames.
   void            setConfirmedName(const char* name);
 
