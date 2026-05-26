@@ -61,3 +61,8 @@
 #define FACE_VOTE_KNOWN_MIN               3   // KNOWN hits required within one burst window
 #define FACE_VOTE_KNOWN_WINDOW_MS     8000UL  // burst window for KNOWN hit accumulation
 #define FACE_VOTE_UNKNOWN_MIN_HITS       10   // min UNKNOWN frame hits for UNKNOWN_CONFIRMED
+
+// Buzzer
+#define BUZZER_DEFAULT_FREQ_HZ       2000U    // passive buzzer tone frequency (Hz)
+#define BUZZER_DURATION_MS          60000UL   // auto-silence after 60 s (alarm state unchanged)
+#define BUZZER_TEST_DURATION_MS       500UL   // test beep length

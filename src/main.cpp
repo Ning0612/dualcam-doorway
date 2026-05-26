@@ -123,11 +123,15 @@ static void onKnownConfirmed(const char* name, float similarity) {
   }
 }
 
+static void onBuzzerSilence() {
+  BuzzerController::cancel();
+  Serial.println("[Agent1] buzzer silenced");
+}
+
 static void onAlarmCancelled() {
   Serial.println("[Agent1] alarm cancelled by Agent 2");
+  BuzzerController::cancel();   // safety: ensure off even if already auto-silenced
   LedController::setBlinking(false);
-  BuzzerController::cancel();
-  // Revert LED to base alert level
   LedController::setLevel(sm.getAlertLevel());
 }
 
@@ -254,7 +258,7 @@ void setup() {
 
   // Actuators first (visual boot indicator)
   LedController::begin(PIN_LED_DATA);
-  BuzzerController::begin(PIN_BUZZER);
+  BuzzerController::begin(PIN_BUZZER, BUZZER_DEFAULT_FREQ_HZ);
   LedController::setLevel(AlertLevel::ALERT_RED);  // default: red (Agent 2 offline)
 
   // WiFi provisioning — blocks until connected or 5-min AP timeout
@@ -275,6 +279,8 @@ void setup() {
   // Settings & config
   SettingsStore::init();
   ConfigManager::begin();
+  BuzzerController::setFrequency(ConfigManager::getBuzzerFreq());
+  sm.setBuzzerDuration(ConfigManager::getBuzzerDurationMs());
 
   // Hall sensor
   uint16_t hallThresh = SettingsStore::getHallThreshold();
@@ -290,6 +296,7 @@ void setup() {
   sm.setOnDoorEvent(onDoorEvent);
   sm.setOnKnownConfirmed(onKnownConfirmed);
   sm.setOnAlarmCancelled(onAlarmCancelled);
+  sm.setOnBuzzerSilence(onBuzzerSilence);
 
   // Face recognition
   FaceRecognizer::begin();
@@ -343,6 +350,7 @@ void loop() {
 
   DoorSensor::tick();
   LedController::tick();
+  BuzzerController::tick();
   AgentComm::tick();
 
   // Face recognition pipeline → FaceVoter → SecurityStateMachine

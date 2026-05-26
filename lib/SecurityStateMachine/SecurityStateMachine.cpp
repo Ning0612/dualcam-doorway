@@ -19,9 +19,17 @@ void SecurityStateMachine::_recalcAlertLevel() {
                                              : AlertLevel::ALERT_RED;
 }
 
+void SecurityStateMachine::_silenceBuzzer() {
+  if (!_buzzerActive) return;
+  _buzzerActive = false;
+  if (_onBuzzerSilence) _onBuzzerSilence();
+}
+
 void SecurityStateMachine::_triggerAlarm() {
   if (_alarmActive) return;
   _alarmActive        = true;
+  _buzzerActive       = true;
+  _buzzerStartMs      = millis();
   _waitingForDecision = false;
   _recalcAlertLevel();  // _alarmActive=true → always RED
   if (_onAlert) _onAlert(_alertLevel, "UNKNOWN_CONFIRMED");
@@ -31,6 +39,7 @@ void SecurityStateMachine::_cancelAlarm() {
   if (!_alarmActive) return;
   _alarmActive    = false;
   _knownConfirmed = false;  // invalidate stale green window; post-alarm level is base (Y/R)
+  _silenceBuzzer();         // stop buzzer (no-op if already auto-silenced)
   _recalcAlertLevel();
   if (_onAlarmCancelled) _onAlarmCancelled();
 }
@@ -54,6 +63,11 @@ void SecurityStateMachine::onVoteResult(VoteResult result, const char* name, flo
     _waitingForDecision = false;
 
     if (_onKnownConfirmed) _onKnownConfirmed(_lastKnownUser, _lastSimilarity);
+
+    // Condition C: known user confirmed while alarm buzzer is ringing → silence buzzer only.
+    // Alarm state stays active; only Agent 2 CANCEL_ALARM clears it.
+    if (_alarmActive && _buzzerActive) _silenceBuzzer();
+
     _recalcAlertLevel();
 
   } else if (result == VoteResult::UNKNOWN_CONFIRMED) {
@@ -88,8 +102,9 @@ void SecurityStateMachine::onDoorChange(DoorState state) {
   if (_onDoorEvent) _onDoorEvent(state, user);
 
   if (state == DoorState::DOOR_CLOSED) {
-    // Door closed: clear pending attribution
     memset(_pendingDoorUser, 0, sizeof(_pendingDoorUser));
+    // Condition B: door closed while buzzer is ringing → silence buzzer, alarm stays active.
+    if (_alarmActive && _buzzerActive) _silenceBuzzer();
   }
 }
 
@@ -135,6 +150,11 @@ void SecurityStateMachine::tick() {
     _knownConfirmed = false;
     _faceState      = FaceState::FACE_NO_FACE;
     _recalcAlertLevel();
+  }
+
+  // Condition A: buzzer auto-silence after duration (alarm state unchanged)
+  if (_buzzerActive && (now - _buzzerStartMs) >= _buzzerDurationMs) {
+    _silenceBuzzer();
   }
 
   // Yellow-alert decision timeout → default to TRIGGER_ALARM

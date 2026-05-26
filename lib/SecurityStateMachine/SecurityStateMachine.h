@@ -32,12 +32,16 @@ public:
   // Call every loop() iteration for timeout handling.
   void tick();
 
+  // Override buzzer auto-silence duration (default 60 s). Call after ConfigManager::begin().
+  void setBuzzerDuration(unsigned long ms) { _buzzerDurationMs = ms; }
+
   // ── State queries ─────────────────────────────────────────────────────────
   AlertLevel  getAlertLevel()    const { return _alertLevel; }
   DoorState   getDoorState()     const { return _doorState; }
   FaceState   getFaceState()     const { return _faceState; }
   bool        isAgent2Online()   const { return _agent2Online; }
   bool        isAlarmActive()    const { return _alarmActive; }
+  bool        isBuzzerActive()   const { return _buzzerActive; }
   const char* getLastKnownUser() const { return _lastKnownUser; }
 
   // ── Callbacks (set before first call to any on*) ──────────────────────────
@@ -60,6 +64,11 @@ public:
   using CancelCallback = void(*)();
   void setOnAlarmCancelled(CancelCallback cb) { _onAlarmCancelled = cb; }
 
+  // Fired when buzzer is silenced while alarm remains active (conditions A/B/C).
+  // Also fired from _cancelAlarm() before _onAlarmCancelled.
+  using SilenceCallback = void(*)();
+  void setOnBuzzerSilence(SilenceCallback cb) { _onBuzzerSilence = cb; }
+
 private:
   AlertLevel  _alertLevel    = AlertLevel::ALERT_RED;
   DoorState   _doorState     = DoorState::DOOR_CLOSED;
@@ -74,6 +83,11 @@ private:
   char          _lastKnownUser[17] = {};
   float         _lastSimilarity   = 0.0f;
 
+  // Buzzer auto-silence tracking
+  bool          _buzzerActive      = false;
+  unsigned long _buzzerStartMs     = 0;
+  unsigned long _buzzerDurationMs  = 60000UL;  // overridable via setBuzzerDuration()
+
   // Yellow-alert decision window
   bool          _waitingForDecision = false;
   unsigned long _decisionStartMs    = 0;
@@ -81,12 +95,14 @@ private:
   // Pending door-related user attribution
   char _pendingDoorUser[17] = {};
 
-  AlertCallback  _onAlert          = nullptr;
-  DoorCallback   _onDoorEvent      = nullptr;
-  KnownCallback  _onKnownConfirmed = nullptr;
-  CancelCallback _onAlarmCancelled = nullptr;
+  AlertCallback   _onAlert          = nullptr;
+  DoorCallback    _onDoorEvent      = nullptr;
+  KnownCallback   _onKnownConfirmed = nullptr;
+  CancelCallback  _onAlarmCancelled = nullptr;
+  SilenceCallback _onBuzzerSilence  = nullptr;
 
   void _recalcAlertLevel();
   void _triggerAlarm();
   void _cancelAlarm();
+  void _silenceBuzzer();  // stop buzzer only; alarm state unchanged
 };

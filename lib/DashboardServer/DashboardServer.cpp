@@ -2,6 +2,7 @@
 #include "SessionAuth.h"
 #include "SettingsStore.h"
 #include "ConfigManager.h"
+#include "BuzzerController.h"
 #include "DoorSensor.h"
 #include "CameraAgent.h"
 #include "FaceRecognizer.h"
@@ -176,8 +177,26 @@ static const char SETTINGS_HTML[] =
   "<p style='font-size:.8em;color:#666'>Current raw: %HALL_RAW% &mdash; "
   "set between closed and open readings.</p>"
   "</fieldset>"
+  "<fieldset><legend>Buzzer</legend>"
+  "<label>Frequency (200-8000 Hz)<br>"
+  "<input type='number' name='buzzer_freq' min='200' max='8000' value='%BUZZER_FREQ%' id='bf'></label>"
+  "<label>Alert Duration (10-300 s)<br>"
+  "<input type='number' name='buzzer_dur_s' min='10' max='300' value='%BUZZER_DUR_S%'></label>"
+  "<button type='button' onclick='tstBz()'>Test</button>"
+  "<p style='font-size:.8em;color:#666'>Auto-silence after duration; alarm LED stays active.</p>"
+  "</fieldset>"
   "<button>Save</button>"
-  "</form></body></html>";
+  "</form>"
+  "<script>function tstBz(){"
+  "var f=document.getElementById('bf').value;"
+  "var c=document.querySelector('[name=csrf]').value;"
+  "var fd=new FormData();fd.append('freq',f);fd.append('csrf',c);"
+  "fetch('/api/buzzer/test',{method:'POST',body:fd}).then(function(r){"
+  "var b=document.getElementById('bf');"
+  "b.style.background=r.ok?'#d4edda':'#f8d7da';"
+  "setTimeout(function(){b.style.background='';},800);});}"
+  "</script>"
+  "</body></html>";
 
 static const char PWCHANGE_HTML[] =
   "<!DOCTYPE html><html><head>"
@@ -412,11 +431,13 @@ void DashboardServer::begin(WebServer& server,
     page.replace("%MQTT_PORT%",   String(ConfigManager::getMqttPort()));
     page.replace("%HALL_THRESH%", String(SettingsStore::getHallThreshold()));
     page.replace("%HALL_RAW%",    String(DoorSensor::getRaw()));
+    page.replace("%BUZZER_FREQ%", String(ConfigManager::getBuzzerFreq()));
+    page.replace("%BUZZER_DUR_S%",String(ConfigManager::getBuzzerDurationMs() / 1000));
     server.send(200, "text/html", page);
   });
 
   // ── Settings save ───────────────────────────────────────────────────────────
-  server.on("/settings/save", HTTP_POST, [&server]() {
+  server.on("/settings/save", HTTP_POST, [&server, &sm]() {
     if (!requireAuthAndChangedPassword(server)) return;
     if (!SessionAuth::verifyCsrf(server.arg("csrf"))) {
       server.send(403, "text/plain", "CSRF validation failed.");
@@ -464,6 +485,23 @@ void DashboardServer::begin(WebServer& server,
       }
     }
 
+    // Buzzer settings
+    if (server.hasArg("buzzer_freq") && server.hasArg("buzzer_dur_s")) {
+      int freq = server.arg("buzzer_freq").toInt();
+      int durs = server.arg("buzzer_dur_s").toInt();
+      if (freq < 200 || freq > 8000) {
+        msg += "<p class='err'>Buzzer frequency must be 200-8000 Hz.</p>";
+      } else if (durs < 10 || durs > 300) {
+        msg += "<p class='err'>Buzzer duration must be 10-300 s.</p>";
+      } else if (!ConfigManager::saveBuzzerSettings((uint32_t)freq, (uint32_t)durs * 1000UL)) {
+        msg += "<p class='err'>Failed to save buzzer settings.</p>";
+      } else {
+        BuzzerController::setFrequency((uint32_t)freq);
+        sm.setBuzzerDuration((uint32_t)durs * 1000UL);
+        msg += "<p class='ok'>Buzzer settings saved.</p>";
+      }
+    }
+
     // Hall threshold
     if (server.hasArg("hall_threshold")) {
       String hallArg = server.arg("hall_threshold");
@@ -494,6 +532,8 @@ void DashboardServer::begin(WebServer& server,
     page.replace("%MQTT_PORT%",   String(ConfigManager::getMqttPort()));
     page.replace("%HALL_THRESH%", String(SettingsStore::getHallThreshold()));
     page.replace("%HALL_RAW%",    String(DoorSensor::getRaw()));
+    page.replace("%BUZZER_FREQ%", String(ConfigManager::getBuzzerFreq()));
+    page.replace("%BUZZER_DUR_S%",String(ConfigManager::getBuzzerDurationMs() / 1000));
     server.send(200, "text/html", page);
   });
 
@@ -533,6 +573,27 @@ void DashboardServer::begin(WebServer& server,
   });
 
   // ── Face management API ─────────────────────────────────────────────────────
+  server.on("/api/buzzer/test", HTTP_POST, [&server, &sm]() {
+    if (!requireAuth(server)) return;
+    if (!SessionAuth::verifyCsrf(server.arg("csrf"))) {
+      server.send(403, "text/plain", "CSRF validation failed.");
+      return;
+    }
+    if (sm.isAlarmActive()) {
+      // Alarm buzzer (or auto-silenced alarm) takes priority; refuse test during active alarm
+      server.send(409, "text/plain", "Alarm active");
+      return;
+    }
+    uint32_t freq = ConfigManager::getBuzzerFreq();
+    String freqArg = server.arg("freq");
+    if (freqArg.length() > 0) {
+      int f = freqArg.toInt();
+      if (f >= 200 && f <= 8000) freq = (uint32_t)f;
+    }
+    BuzzerController::testBeep(freq, BUZZER_TEST_DURATION_MS);
+    server.send(200, "text/plain", "OK");
+  });
+
   server.on("/api/face/enroll", HTTP_POST, [&server]() {
     if (!requireAuthAndChangedPassword(server)) return;
     if (!SessionAuth::verifyCsrf(server.arg("csrf"))) {
