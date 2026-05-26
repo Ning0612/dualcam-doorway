@@ -41,16 +41,16 @@
 // the pending enrollment is automatically cancelled.
 #define CAMERA_ENROLL_TIMEOUT_MS  10000UL
 // Cosine similarity threshold: above = KNOWN (per-template best score).
-// Lowered to 0.90 to accommodate multi-template diversity across lighting/angle.
-#define FACE_SIMILARITY_THRESHOLD  0.90f
+// Observed: enrolled face ≈ 0.920–0.963, stranger ≈ 0.782–0.825.
+#define FACE_SIMILARITY_THRESHOLD  0.91f
 // Minimum margin between best-user score and second-best-user score.
 // Prevents misidentification when two users have similar feature vectors.
 // Only applies when ≥2 users are enrolled; single-user scenarios ignore margin.
 #define FACE_MARGIN_MIN            0.03f
 // Minimum mean L1 gradient per pixel (HOG-lite texture score).
-// Uniform scenes (ceiling, wall) have near-zero gradient and are rejected.
-// Typical values: blank wall ≈ 0.0–0.3, face ≈ 1.5–8.0. Tune via serial log.
-#define FACE_TEXTURE_MIN_STDDEV   1.5f
+// Observed: real face ≈ 17–27, non-face false-positive ≈ 5–10, blank wall < 1.
+// Threshold at 12 cleanly separates non-face noise from actual face texture.
+#define FACE_TEXTURE_MIN_STDDEV   12.0f
 
 // Discord Notifier
 #define DISCORD_RATE_LIMIT_MS    30000UL    // min interval between same-event alerts
