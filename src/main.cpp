@@ -173,7 +173,7 @@ static void onAgent2Connection(bool connected) {
 //
 // Single source of truth for LED state. Priority:
 //   1. Alarm active  → red blinking
-//   2. ALERT_GREEN   → green solid (known-confirmed 15 s window)
+//   2. ALERT_GREEN   → green solid (known-confirmed 60 s window)
 //   3. Face detected → white solid (fill light for recognition)
 //   4. Idle          → off
 //
@@ -457,6 +457,14 @@ void loop() {
     Serial.println("[Agent1] unknown visitor confirmed by vote window");
     logManager.logFace(FaceState::FACE_UNKNOWN, VoteResult::UNKNOWN_CONFIRMED, "", 0.0f);
     sm.onVoteResult(VoteResult::UNKNOWN_CONFIRMED);
+  }
+
+  // Feed raw KNOWN detections so SecurityStateMachine can attribute door opens
+  // to a user currently in frame (even after the KNOWN_CONFIRMED vote window expires).
+  // Guard with lastRawResultMs() so stale cached results don't refresh the timestamp.
+  if (CameraAgent::lastRawResult() == FaceResult::KNOWN &&
+      millis() - CameraAgent::lastRawResultMs() < 2 * CAMERA_DETECT_INTERVAL_MS) {
+    sm.onFaceKnownRaw(FaceRecognizer::getLastMatchName());
   }
 
   // Periodic MQTT status heartbeat

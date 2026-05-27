@@ -10,7 +10,7 @@
 // AlertLevel derivation:
 //   !agent2Online || !occupied → ALERT_RED   (independent operation)
 //   occupied && agent2Online  → ALERT_YELLOW (coordinate with Agent 2)
-//   KNOWN_CONFIRMED, no alarm → ALERT_GREEN  (brief; reverts to base on idle)
+//   KNOWN_CONFIRMED, no alarm → ALERT_GREEN  (60 s window; reverts to base on idle)
 //
 // Unknown visitor handling:
 //   ALERT_RED  → immediate buzzer + LED blink + Discord + log
@@ -23,7 +23,7 @@
 //   C. KNOWN_CONFIRMED vote received while alarm is active
 
 static constexpr unsigned long ALARM_DECISION_TIMEOUT_MS = 30000UL;
-static constexpr unsigned long KNOWN_GREEN_DURATION_MS   = 15000UL;
+static constexpr unsigned long KNOWN_GREEN_DURATION_MS   = 60000UL;
 
 class SecurityStateMachine {
 public:
@@ -33,6 +33,11 @@ public:
   void onPresence(bool occupied);
   void onAlarmDecision(AlarmDecision d);
   void onAgent2Online(bool online);
+
+  // Call each loop() when raw face result is KNOWN (before FaceVoter voting).
+  // Keeps a "face currently seen" timestamp for door attribution when the
+  // 60-second KNOWN_CONFIRMED window has expired but the face is still in frame.
+  void onFaceKnownRaw(const char* name);
 
   // Call every loop() iteration for timeout handling.
   void tick();
@@ -98,7 +103,16 @@ private:
   unsigned long _decisionStartMs    = 0;
 
   // Pending door-related user attribution
-  char _pendingDoorUser[17] = {};
+  char          _pendingDoorUser[17]   = {};
+
+  // Currently-seen known face (raw, pre-vote). Used when KNOWN_GREEN window has
+  // expired but the face is still actively in frame at the moment the door opens.
+  char          _lastSeenKnownName[17] = {};
+  unsigned long _lastSeenKnownMs       = 0;
+
+  // True after a "known user returned" door event fires; blocks re-attribution
+  // until the next KNOWN_CONFIRMED or the green window expires.
+  bool          _returnFired           = false;
 
   AlertCallback   _onAlert          = nullptr;
   DoorCallback    _onDoorEvent      = nullptr;

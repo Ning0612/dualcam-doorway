@@ -56,6 +56,8 @@ void SecurityStateMachine::onVoteResult(VoteResult result, const char* name, flo
     strncpy(_lastKnownUser, name ? name : "", sizeof(_lastKnownUser) - 1);
     _lastKnownUser[sizeof(_lastKnownUser) - 1] = '\0';
 
+    _returnFired = false;  // new confirmation = allow fresh attribution
+
     // Door attribution: next door-open within KNOWN_GREEN_DURATION_MS uses this name
     strncpy(_pendingDoorUser, _lastKnownUser, sizeof(_pendingDoorUser) - 1);
 
@@ -91,11 +93,16 @@ void SecurityStateMachine::onDoorChange(DoorState state) {
   _doorState = state;
 
   const char* user = "";
-  if (state == DoorState::DOOR_OPEN && _pendingDoorUser[0] != '\0') {
-    // Only attribute door open to known user if within the confirmed time window
-    if (millis() - _knownConfirmedMs < KNOWN_GREEN_DURATION_MS) {
+  if (state == DoorState::DOOR_OPEN && !_returnFired) {
+    // Primary: within KNOWN_CONFIRMED time window
+    if (_pendingDoorUser[0] && millis() - _knownConfirmedMs < KNOWN_GREEN_DURATION_MS) {
       user = _pendingDoorUser;
     }
+    // Fallback: face currently in frame (within ~3 detection cycles = 1.5 s)
+    else if (_lastSeenKnownName[0] && millis() - _lastSeenKnownMs < 1500UL) {
+      user = _lastSeenKnownName;
+    }
+    if (user[0]) _returnFired = true;  // suppress re-attribution until next visit
   }
 
   if (_onDoorEvent) _onDoorEvent(state, user);
@@ -139,6 +146,13 @@ void SecurityStateMachine::onAgent2Online(bool online) {
   }
 }
 
+void SecurityStateMachine::onFaceKnownRaw(const char* name) {
+  if (!name || !name[0]) return;
+  strncpy(_lastSeenKnownName, name, sizeof(_lastSeenKnownName) - 1);
+  _lastSeenKnownName[sizeof(_lastSeenKnownName) - 1] = '\0';
+  _lastSeenKnownMs = millis();
+}
+
 // ── Tick (timeout handling) ───────────────────────────────────────────────────
 
 void SecurityStateMachine::tick() {
@@ -148,6 +162,7 @@ void SecurityStateMachine::tick() {
   if (_knownConfirmed && (now - _knownConfirmedMs) >= KNOWN_GREEN_DURATION_MS) {
     _knownConfirmed = false;
     _faceState      = FaceState::FACE_NO_FACE;
+    _returnFired    = false;  // allow fresh attribution in next visit
     _recalcAlertLevel();
   }
 

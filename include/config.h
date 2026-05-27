@@ -46,7 +46,7 @@
 #define CAMERA_ENROLL_TIMEOUT_MS  10000UL
 // Cosine similarity threshold: above = KNOWN (per-template best score).
 // Observed: enrolled face ≈ 0.920–0.963, stranger ≈ 0.782–0.825.
-#define FACE_SIMILARITY_THRESHOLD  0.91f
+#define FACE_SIMILARITY_THRESHOLD  0.90f
 // Minimum margin between best-user score and second-best-user score.
 // Prevents misidentification when two users have similar feature vectors.
 // Only applies when ≥2 users are enrolled; single-user scenarios ignore margin.
