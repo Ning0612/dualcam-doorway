@@ -40,6 +40,7 @@ static const char DASHBOARD_HTML[] =
   "<a href='/log/door'>Door Log</a> | "
   "<a href='/log/face'>Face Log</a> | "
   "<a href='/log/alert'>Alert Log</a> | "
+  "<a href='/analytics'>Analytics</a> | "
   "<a href='/logout'>Logout</a>"
   "</nav>"
   "<div class='row'>"
@@ -225,23 +226,134 @@ static const char LOG_HTML[] =
   "<style>body{font-family:sans-serif;max-width:900px;margin:20px auto;padding:20px}"
   "table{width:100%;border-collapse:collapse;font-size:.9em}"
   "th,td{padding:8px;text-align:left;border-bottom:1px solid #ddd}"
-  "th{background:#f5f5f5;font-weight:bold}"
-  "a{color:#0070f3}"
+  "th{background:#f5f5f5}a{color:#0070f3}"
+  ".ctrl{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0}"
+  "select,input[type=text]{padding:6px;border:1px solid #ccc;border-radius:4px}"
+  "button{padding:6px 12px;background:#0070f3;color:#fff;border:none;border-radius:4px;cursor:pointer}"
+  "button:disabled{opacity:.5}"
   "</style></head><body>"
   "<h2>%TITLE%</h2>"
-  "<nav><a href='/dashboard'>&larr; Dashboard</a></nav>"
+  "<nav><a href='/dashboard'>&larr; Dashboard</a> | <a href='/analytics'>Analytics</a></nav>"
+  "<div class='ctrl'>"
+  "<select id='mo' onchange='onMoChange()'><option value=''>Recent (RAM)</option></select>"
+  "<input type='text' id='fi' placeholder='filter...' oninput='applyFilter()'>"
+  "<span id='pi'></span>"
+  "</div>"
+  "<div class='ctrl'>"
+  "<button onclick='prev()' id='pb' disabled>&larr; Prev</button>"
+  "<button onclick='next()' id='nb' disabled>Next &rarr;</button>"
+  "</div>"
   "<div id='tbl'><p>Loading...</p></div>"
   "<script>"
   "function esc(v){return String(v===null||v===undefined?'':v)"
   ".replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;');}"
-  "fetch('%API%').then(r=>r.json()).then(function(d){"
-  "if(!d.length){document.getElementById('tbl').innerHTML='<p>No entries.</p>';return;}"
-  "var keys=Object.keys(d[0]);"
+  "var pg=1,tot=0,allRows=[];"
+  "function renderRows(rows){"
+  "if(!rows.length){document.getElementById('tbl').innerHTML='<p>No entries.</p>';return;}"
+  "var keys=Object.keys(rows[0]);"
   "var h='<table><tr>'+keys.map(k=>'<th>'+esc(k)+'</th>').join('')+'</tr>';"
-  "d.forEach(function(row){"
-  "h+='<tr>'+keys.map(k=>'<td>'+esc(row[k])+'</td>').join('')+'</tr>';});"
-  "document.getElementById('tbl').innerHTML=h+'</table>';"
-  "}).catch(function(){document.getElementById('tbl').innerHTML='<p>Failed to load.</p>';});"
+  "rows.forEach(function(row){h+='<tr>'+keys.map(k=>'<td>'+esc(row[k])+'</td>').join('')+'</tr>';});"
+  "document.getElementById('tbl').innerHTML=h+'</table>';}"
+  "function applyFilter(){"
+  "var fi=document.getElementById('fi').value.toLowerCase();"
+  "var rows=fi?allRows.filter(r=>JSON.stringify(r).toLowerCase().includes(fi)):allRows;"
+  "renderRows(rows);}"
+  "function onMoChange(){pg=1;loadData();}"
+  "function prev(){if(pg>1){pg--;loadData();}}"
+  "function next(){if(pg*20<tot){pg++;loadData();}}"
+  "function loadData(){"
+  "var mo=document.getElementById('mo').value;"
+  "var url=mo?('%API_PAGED%?page='+pg+'&per_page=20&month='+mo):'%API_RING%';"
+  "fetch(url).then(r=>r.json()).then(function(d){"
+  "if(Array.isArray(d)){allRows=d;tot=d.length;pg=1;}"
+  "else{allRows=d.data||[];tot=d.total||0;}"
+  "var pages=Math.ceil(tot/20)||1;"
+  "document.getElementById('pi').textContent='Page '+pg+'/'+pages+' ('+tot+' entries)';"
+  "document.getElementById('pb').disabled=(pg<=1);"
+  "document.getElementById('nb').disabled=(pg>=pages);"
+  "applyFilter();"
+  "}).catch(function(){document.getElementById('tbl').innerHTML='<p>Failed to load.</p>';});}"
+  "fetch('/api/log/months').then(r=>r.json()).then(function(months){"
+  "var sel=document.getElementById('mo');"
+  "months.forEach(function(m){"
+  "var o=document.createElement('option');o.value=m;"
+  "var y=Math.floor(m/100),mn=m%100;"
+  "o.text=y+'-'+(mn<10?'0':'')+mn;sel.appendChild(o);});"
+  "if(months.length)sel.value=months[0];"
+  "loadData();"
+  "}).catch(function(){loadData();});"
+  "</script></body></html>";
+
+static const char ANALYTICS_HTML[] =
+  "<!DOCTYPE html><html><head>"
+  "<meta charset='utf-8'><title>Analytics - Agent 1</title>"
+  "<style>body{font-family:sans-serif;max-width:900px;margin:20px auto;padding:20px}"
+  ".card{background:#f5f5f5;border-radius:8px;padding:16px;margin:12px 0}"
+  ".row{display:flex;gap:16px;flex-wrap:wrap}.col{flex:1;min-width:200px}"
+  "a{color:#0070f3}.num{font-size:2em;font-weight:bold;color:#0070f3}"
+  ".numd{font-size:2em;font-weight:bold;color:#dc3545}.sub{font-size:.9em;color:#666}"
+  "select{padding:6px;border:1px solid #ccc;border-radius:4px;margin-bottom:8px}"
+  "</style></head><body>"
+  "<h2>Analytics</h2>"
+  "<nav><a href='/dashboard'>&larr; Dashboard</a> | "
+  "<a href='/log/door'>Door</a> | <a href='/log/face'>Face</a> | <a href='/log/alert'>Alert</a></nav>"
+  "<select id='mo' onchange='load()'><option value='0'>This Month</option></select>"
+  "<div class='row'>"
+  "<div class='col card'><div class='sub'>Door Events Today</div>"
+  "<div class='num' id='dt'>-</div>"
+  "<div class='sub'>Week: <span id='dw'>-</span> &bull; Month: <span id='dm'>-</span></div>"
+  "<div class='sub'>Open: <span id='do'>-</span> &bull; Closed: <span id='dco'>-</span></div></div>"
+  "<div class='col card'><div class='sub'>Face Recognitions Today</div>"
+  "<div class='num' id='ft'>-</div>"
+  "<div class='sub'>Week: <span id='fw'>-</span> &bull; Month: <span id='fm'>-</span></div>"
+  "<div class='sub'>Known%: <span id='fk'>-</span></div></div>"
+  "<div class='col card'><div class='sub'>Alerts Today</div>"
+  "<div class='numd' id='at'>-</div>"
+  "<div class='sub'>Week: <span id='aw'>-</span> &bull; Month: <span id='am'>-</span></div>"
+  "<div class='sub'>Last: <span id='al'>none</span></div></div>"
+  "</div>"
+  "<div class='card'><div class='sub'>Door Events (last 7 days)</div><div id='dch'></div></div>"
+  "<div class='card'><div class='sub'>Face Events (last 7 days)</div><div id='fch'></div></div>"
+  "<script>"
+  "function drawBar(data,cid,lbl){"
+  "var s='<svg width=\"100%\" height=\"80\" viewBox=\"0 0 210 80\">';"
+  "var m=Math.max.apply(null,data.concat([1]));"
+  "var days=lbl||['M','T','W','T','F','S','S'];"
+  "data.forEach(function(v,i){"
+  "var h=Math.round(v/m*60),x=i*30+5,y=70-h;"
+  "s+='<rect x=\"'+x+'\" y=\"'+y+'\" width=\"22\" height=\"'+h+'\" fill=\"#0070f3\"/>';"
+  "s+='<text x=\"'+(x+11)+'\" y=\"78\" font-size=\"8\" text-anchor=\"middle\">'+days[i]+'</text>';"
+  "if(v)s+='<text x=\"'+(x+11)+'\" y=\"'+(y-2)+'\" font-size=\"7\" text-anchor=\"middle\">'+v+'</text>';"
+  "});"
+  "document.getElementById(cid).innerHTML=s+'</svg>';}"
+  "function load(){"
+  "var mo=document.getElementById('mo').value||'0';"
+  "fetch('/api/log/stats?month='+mo).then(r=>r.json()).then(function(d){"
+  "var dr=d.door||{},fr=d.face||{},ar=d.alert||{};"
+  "document.getElementById('dt').textContent=dr.today||0;"
+  "document.getElementById('dw').textContent=dr.week||0;"
+  "document.getElementById('dm').textContent=dr.month_total||0;"
+  "document.getElementById('do').textContent=dr.open_count||0;"
+  "document.getElementById('dco').textContent=dr.close_count||0;"
+  "document.getElementById('ft').textContent=fr.today||0;"
+  "document.getElementById('fw').textContent=fr.week||0;"
+  "document.getElementById('fm').textContent=fr.month_total||0;"
+  "document.getElementById('fk').textContent=(fr.known_pct||0)+'%';"
+  "document.getElementById('at').textContent=ar.today||0;"
+  "document.getElementById('aw').textContent=ar.week||0;"
+  "document.getElementById('am').textContent=ar.month_total||0;"
+  "document.getElementById('al').textContent=ar.last_at?(ar.last_at.substring(0,16)):'none';"
+  "if(dr.daily_week)drawBar(dr.daily_week,'dch',d.week_labels);"
+  "if(fr.daily_week)drawBar(fr.daily_week,'fch',d.week_labels);"
+  "}).catch(function(){});}"
+  "fetch('/api/log/months').then(r=>r.json()).then(function(months){"
+  "var sel=document.getElementById('mo');"
+  "months.forEach(function(m){"
+  "var o=document.createElement('option');o.value=m;"
+  "var y=Math.floor(m/100),mn=m%100;"
+  "o.text=y+'-'+(mn<10?'0':'')+mn;sel.appendChild(o);});"
+  "}).catch(function(){});"
+  "load();"
   "</script></body></html>";
 
 // ── Module-level state ────────────────────────────────────────────────────────
@@ -402,25 +514,82 @@ void DashboardServer::begin(WebServer& server,
   server.on("/log/door", HTTP_GET, [&server]() {
     if (!requireAuthAndChangedPassword(server)) return;
     String page = LOG_HTML;
-    page.replace("%TITLE%", "Door Log");
-    page.replace("%API%",   "/api/log/door");
+    page.replace("%TITLE%",     "Door Log");
+    page.replace("%API_RING%",  "/api/log/door");
+    page.replace("%API_PAGED%", "/api/log/door/paged");
     server.send(200, "text/html", page);
   });
 
   server.on("/log/face", HTTP_GET, [&server]() {
     if (!requireAuthAndChangedPassword(server)) return;
     String page = LOG_HTML;
-    page.replace("%TITLE%", "Face Log");
-    page.replace("%API%",   "/api/log/face");
+    page.replace("%TITLE%",     "Face Log");
+    page.replace("%API_RING%",  "/api/log/face");
+    page.replace("%API_PAGED%", "/api/log/face/paged");
     server.send(200, "text/html", page);
   });
 
   server.on("/log/alert", HTTP_GET, [&server]() {
     if (!requireAuthAndChangedPassword(server)) return;
     String page = LOG_HTML;
-    page.replace("%TITLE%", "Alert Log");
-    page.replace("%API%",   "/api/log/alert");
+    page.replace("%TITLE%",     "Alert Log");
+    page.replace("%API_RING%",  "/api/log/alert");
+    page.replace("%API_PAGED%", "/api/log/alert/paged");
     server.send(200, "text/html", page);
+  });
+
+  // ── Log paged API ───────────────────────────────────────────────────────────
+  server.on("/api/log/door/paged", HTTP_GET, [&server]() {
+    if (!requireAuthAndChangedPassword(server)) return;
+    uint32_t month   = (uint32_t)server.arg("month").toInt();
+    int32_t  rawPage    = (int32_t)server.arg("page").toInt();
+    int32_t  rawPerPage = (int32_t)server.arg("per_page").toInt();
+    uint16_t page    = (rawPage >= 1 && rawPage <= 9999) ? (uint16_t)rawPage : 1;
+    uint16_t perPage = (rawPerPage >= 1 && rawPerPage <= 50) ? (uint16_t)rawPerPage : 20;
+    if (month == 0) month = LogManager::getCurrentMonth();
+    server.send(200, "application/json",
+                LogManager::getDoorLogPagedJson(month, page, perPage));
+  });
+
+  server.on("/api/log/face/paged", HTTP_GET, [&server]() {
+    if (!requireAuthAndChangedPassword(server)) return;
+    uint32_t month   = (uint32_t)server.arg("month").toInt();
+    int32_t  rawPage    = (int32_t)server.arg("page").toInt();
+    int32_t  rawPerPage = (int32_t)server.arg("per_page").toInt();
+    uint16_t page    = (rawPage >= 1 && rawPage <= 9999) ? (uint16_t)rawPage : 1;
+    uint16_t perPage = (rawPerPage >= 1 && rawPerPage <= 50) ? (uint16_t)rawPerPage : 20;
+    if (month == 0) month = LogManager::getCurrentMonth();
+    server.send(200, "application/json",
+                LogManager::getFaceLogPagedJson(month, page, perPage));
+  });
+
+  server.on("/api/log/alert/paged", HTTP_GET, [&server]() {
+    if (!requireAuthAndChangedPassword(server)) return;
+    uint32_t month   = (uint32_t)server.arg("month").toInt();
+    int32_t  rawPage    = (int32_t)server.arg("page").toInt();
+    int32_t  rawPerPage = (int32_t)server.arg("per_page").toInt();
+    uint16_t page    = (rawPage >= 1 && rawPage <= 9999) ? (uint16_t)rawPage : 1;
+    uint16_t perPage = (rawPerPage >= 1 && rawPerPage <= 50) ? (uint16_t)rawPerPage : 20;
+    if (month == 0) month = LogManager::getCurrentMonth();
+    server.send(200, "application/json",
+                LogManager::getAlertLogPagedJson(month, page, perPage));
+  });
+
+  server.on("/api/log/stats", HTTP_GET, [&server]() {
+    if (!requireAuthAndChangedPassword(server)) return;
+    uint32_t month = (uint32_t)server.arg("month").toInt();
+    server.send(200, "application/json", LogManager::getStatsJson(month));
+  });
+
+  server.on("/api/log/months", HTTP_GET, [&server]() {
+    if (!requireAuthAndChangedPassword(server)) return;
+    server.send(200, "application/json", LogManager::getAvailableMonthsJson());
+  });
+
+  // ── Analytics page ───────────────────────────────────────────────────────────
+  server.on("/analytics", HTTP_GET, [&server]() {
+    if (!requireAuthAndChangedPassword(server)) return;
+    server.send(200, "text/html", ANALYTICS_HTML);
   });
 
   // ── Settings page ───────────────────────────────────────────────────────────

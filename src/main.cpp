@@ -375,6 +375,7 @@ void setup() {
 
   // Log system
   logManager.begin();
+  LogManager::beginSpiffs();
 
   // State machine callbacks
   sm.setOnAlert(onAlert);
