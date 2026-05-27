@@ -38,4 +38,9 @@ private:
   static unsigned long _failCooldownStartMs;  // 0 = not in cooldown; rollover-safe via elapsed check
 
   static bool _isValidUrl(const String& url);
+
+  // Fail-fast guard for notify() and notifyWithPhoto().
+  // Checks WiFi, URL validity, fail cooldown, and per-event rate limit.
+  // notifyBoot() intentionally skips this to avoid polluting security-alert throttling.
+  static bool _canSend(const String& url, AlertEvent event);
 };

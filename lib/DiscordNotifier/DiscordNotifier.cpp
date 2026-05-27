@@ -9,44 +9,9 @@
 unsigned long DiscordNotifier::_lastNotifyMs[DiscordNotifier::ALERT_EVENT_COUNT] = {};
 unsigned long DiscordNotifier::_failCooldownStartMs = 0;
 
-bool DiscordNotifier::notify(const String& webhookUrl, AlertEvent event,
-                              const String& message) {
-  // ── Fail-fast checks (no network I/O) ──────────────────────────────────────
-  if (WiFi.status() != WL_CONNECTED)  return false;
-  if (!_isValidUrl(webhookUrl))        return false;
+// ── Private helpers ───────────────────────────────────────────────────────────
 
-  if (_failCooldownStartMs != 0 &&
-      millis() - _failCooldownStartMs < DISCORD_FAIL_COOLDOWN_MS) {
-    Serial.println("[Discord] Skipped: failure cooldown active.");
-    return false;
-  }
-
-  int idx = static_cast<int>(event);
-  if (idx >= 0 && idx < ALERT_EVENT_COUNT) {
-    if (_lastNotifyMs[idx] != 0 && millis() - _lastNotifyMs[idx] < DISCORD_RATE_LIMIT_MS) {
-      Serial.println("[Discord] Skipped: rate limited.");
-      return false;
-    }
-  }
-
-  // ── Log with masked URL (last 8 chars only) ─────────────────────────────────
-  String masked = (webhookUrl.length() >= 8)
-    ? "..." + webhookUrl.substring(webhookUrl.length() - 8)
-    : "...";
-  Serial.printf("[Discord] Sending to %s  IP: %s  DNS: %s / %s\n",
-                masked.c_str(),
-                WiFi.localIP().toString().c_str(),
-                WiFi.dnsIP(0).toString().c_str(),
-                WiFi.dnsIP(1).toString().c_str());
-
-  // ── Build JSON payload ──────────────────────────────────────────────────────
-  JsonDocument doc;
-  doc["content"] = message;
-  String payload;
-  serializeJson(doc, payload);
-
-  // ── HTTPS request ───────────────────────────────────────────────────────────
-  WiFiClientSecure client;
+static void _configureTls(WiFiClientSecure& client) {
 #ifdef DISCORD_TLS_INSECURE
   client.setInsecure();
   Serial.println("[Discord] WARNING: TLS verification disabled (DISCORD_TLS_INSECURE).");
@@ -56,6 +21,51 @@ bool DiscordNotifier::notify(const String& webhookUrl, AlertEvent event,
   #endif
   client.setCACert(DISCORD_ROOT_CA_CERT);
 #endif
+}
+
+bool DiscordNotifier::_canSend(const String& webhookUrl, AlertEvent event) {
+  if (WiFi.status() != WL_CONNECTED) return false;
+  if (!_isValidUrl(webhookUrl))       return false;
+
+  if (_failCooldownStartMs != 0 &&
+      millis() - _failCooldownStartMs < DISCORD_FAIL_COOLDOWN_MS) {
+    Serial.println("[Discord] Skipped: failure cooldown active.");
+    return false;
+  }
+
+  int idx = static_cast<int>(event);
+  if (idx >= 0 && idx < ALERT_EVENT_COUNT &&
+      _lastNotifyMs[idx] != 0 &&
+      millis() - _lastNotifyMs[idx] < DISCORD_RATE_LIMIT_MS) {
+    Serial.println("[Discord] Skipped: rate limited.");
+    return false;
+  }
+  return true;
+}
+
+// ── Public API ────────────────────────────────────────────────────────────────
+
+bool DiscordNotifier::notify(const String& webhookUrl, AlertEvent event,
+                              const String& message) {
+  if (!_canSend(webhookUrl, event)) return false;
+
+  int idx = static_cast<int>(event);
+
+  String masked = (webhookUrl.length() >= 8)
+    ? "..." + webhookUrl.substring(webhookUrl.length() - 8) : "...";
+  Serial.printf("[Discord] Sending to %s  IP: %s  DNS: %s / %s\n",
+                masked.c_str(),
+                WiFi.localIP().toString().c_str(),
+                WiFi.dnsIP(0).toString().c_str(),
+                WiFi.dnsIP(1).toString().c_str());
+
+  JsonDocument doc;
+  doc["content"] = message;
+  String payload;
+  serializeJson(doc, payload);
+
+  WiFiClientSecure client;
+  _configureTls(client);
 
   HTTPClient http;
   http.begin(client, webhookUrl);
@@ -65,7 +75,6 @@ bool DiscordNotifier::notify(const String& webhookUrl, AlertEvent event,
   int code = http.POST(payload);
   http.end();
 
-  // Discord returns 204 No Content on success (200 in some rare cases)
   if (code == 204 || code == 200) {
     if (idx >= 0 && idx < ALERT_EVENT_COUNT) _lastNotifyMs[idx] = millis();
     Serial.printf("[Discord] OK (HTTP %d).\n", code);
@@ -86,28 +95,12 @@ bool DiscordNotifier::notifyWithPhoto(const String& webhookUrl, AlertEvent event
                                        const String& message,
                                        const uint8_t* jpegBuf, size_t jpegLen) {
   if (!jpegBuf || jpegLen == 0) return notify(webhookUrl, event, message);
-
-  // ── Fail-fast checks ──────────────────────────────────────────────────────
-  if (WiFi.status() != WL_CONNECTED) return false;
-  if (!_isValidUrl(webhookUrl))       return false;
-
-  if (_failCooldownStartMs != 0 &&
-      millis() - _failCooldownStartMs < DISCORD_FAIL_COOLDOWN_MS) {
-    Serial.println("[Discord] Skipped: failure cooldown active.");
-    return false;
-  }
+  if (!_canSend(webhookUrl, event)) return false;
 
   int idx = static_cast<int>(event);
-  if (idx >= 0 && idx < ALERT_EVENT_COUNT) {
-    if (_lastNotifyMs[idx] != 0 && millis() - _lastNotifyMs[idx] < DISCORD_RATE_LIMIT_MS) {
-      Serial.println("[Discord] Skipped: rate limited.");
-      return false;
-    }
-  }
 
   String masked = (webhookUrl.length() >= 8)
-    ? "..." + webhookUrl.substring(webhookUrl.length() - 8)
-    : "...";
+    ? "..." + webhookUrl.substring(webhookUrl.length() - 8) : "...";
   Serial.printf("[Discord] Sending photo (%u bytes) to %s\n",
                 (unsigned)jpegLen, masked.c_str());
 
@@ -137,7 +130,6 @@ bool DiscordNotifier::notifyWithPhoto(const String& webhookUrl, AlertEvent event
 
   size_t totalLen = p1.length() + p2.length() + jpegLen + p3.length();
 
-  // Prefer PSRAM for the ~30 KB multipart body to avoid heap fragmentation.
   uint8_t* body = (uint8_t*)heap_caps_malloc(totalLen, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   if (!body) body = (uint8_t*)malloc(totalLen);
   if (!body) {
@@ -151,16 +143,8 @@ bool DiscordNotifier::notifyWithPhoto(const String& webhookUrl, AlertEvent event
   memcpy(body + off, jpegBuf,    jpegLen);      off += jpegLen;
   memcpy(body + off, p3.c_str(), p3.length());
 
-  // ── HTTPS request ─────────────────────────────────────────────────────────
   WiFiClientSecure client;
-#ifdef DISCORD_TLS_INSECURE
-  client.setInsecure();
-#else
-  #ifndef DISCORD_ROOT_CA_CERT
-    #error "DiscordNotifier: define DISCORD_ROOT_CA_CERT (PEM) or define DISCORD_TLS_INSECURE."
-  #endif
-  client.setCACert(DISCORD_ROOT_CA_CERT);
-#endif
+  _configureTls(client);
 
   HTTPClient http;
   http.begin(client, webhookUrl);
@@ -190,6 +174,8 @@ bool DiscordNotifier::notifyWithPhoto(const String& webhookUrl, AlertEvent event
 }
 
 bool DiscordNotifier::notifyBoot(const String& webhookUrl, const String& message) {
+  // Intentionally no cooldown or rate-limit check: boot notification must not
+  // pollute _failCooldownStartMs or _lastNotifyMs and thereby suppress security alerts.
   if (WiFi.status() != WL_CONNECTED) return false;
   if (!_isValidUrl(webhookUrl))       return false;
 
@@ -199,14 +185,7 @@ bool DiscordNotifier::notifyBoot(const String& webhookUrl, const String& message
   serializeJson(doc, payload);
 
   WiFiClientSecure client;
-#ifdef DISCORD_TLS_INSECURE
-  client.setInsecure();
-#else
-  #ifndef DISCORD_ROOT_CA_CERT
-    #error "DiscordNotifier: define DISCORD_ROOT_CA_CERT (PEM) or define DISCORD_TLS_INSECURE."
-  #endif
-  client.setCACert(DISCORD_ROOT_CA_CERT);
-#endif
+  _configureTls(client);
 
   HTTPClient http;
   http.begin(client, webhookUrl);
