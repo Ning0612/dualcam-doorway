@@ -39,7 +39,6 @@ struct FaceVoter {
   void            setConfirmedName(const char* name);
 
 private:
-  unsigned long _windowStartMs  = 0;
   unsigned long _firstKnownMs   = 0;  // start of current KNOWN burst window
   unsigned long _unknownStartMs = 0;  // sustained-UNKNOWN timer; 0 until first UNKNOWN
   unsigned long _lastFaceMs     = 0;

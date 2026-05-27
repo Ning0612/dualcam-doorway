@@ -21,7 +21,6 @@ VoteResult FaceVoter::update(FaceResult raw, unsigned long rawMs, unsigned long 
   _lastFaceMs = now;
   if (!_active) {
     _active         = true;
-    _windowStartMs  = now;
     _lastProgressMs = now;
     Serial.println("[FaceVoter] vote window started");
   }
@@ -102,7 +101,6 @@ void FaceVoter::setConfirmedName(const char* name) {
 }
 
 void FaceVoter::reset() {
-  _windowStartMs   = 0;
   _firstKnownMs    = 0;
   _unknownStartMs  = 0;
   _lastFaceMs      = 0;

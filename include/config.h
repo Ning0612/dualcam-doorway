@@ -2,7 +2,6 @@
 
 // mDNS hostnames — devices get IPs via DHCP, peer discovery via .local names
 #define MDNS_AGENT1        "agent1"    // this device: agent1.local
-#define MDNS_AGENT2        "agent2"    // peer device: agent2.local
 
 // HTTP
 #define HTTP_PORT          80
@@ -11,9 +10,6 @@
 #define WIFI_CONNECT_TIMEOUT_MS  15000UL  // STA connect attempt before fallback to portal
 #define PORTAL_TIMEOUT_MS       300000UL  // 5 min: no POST → restart
 #define WIFI_LOST_TIMEOUT_MS    300000UL  // 5 min disconnected in loop() → restart to portal
-
-// Peer polling (legacy HTTP fallback; primary comm is MQTT)
-#define PEER_QUERY_INTERVAL_MS    5000UL
 
 // MQTT
 #define MQTT_DEFAULT_PORT         1883
