@@ -198,6 +198,38 @@ FaceResult CameraAgent::_runDetection() {
   return result;
 }
 
+// ── captureJpeg() ─────────────────────────────────────────────────────────────
+// Grabs one frame and returns it as a JPEG-encoded byte buffer.
+// The caller owns the returned buffer and must call free(*outBuf) after use.
+// YUV422 frames are converted via frame2jpg(quality=80); JPEG frames are copied.
+
+bool CameraAgent::captureJpeg(uint8_t** outBuf, size_t* outLen) {
+  if (!_ok || !outBuf || !outLen) return false;
+  *outBuf = nullptr;
+  *outLen = 0;
+
+  // fb_count=2: stream task (core 0) holds at most 1 buffer, so one is always
+  // available here on core 1 without blocking.
+  camera_fb_t* fb = esp_camera_fb_get();
+  if (!fb) return false;
+
+  bool ok = false;
+
+  if (fb->format == PIXFORMAT_JPEG) {
+    *outBuf = (uint8_t*)malloc(fb->len);
+    if (*outBuf) {
+      memcpy(*outBuf, fb->buf, fb->len);
+      *outLen = fb->len;
+      ok = true;
+    }
+  } else {
+    ok = frame2jpg(fb, 80, outBuf, outLen);
+  }
+
+  esp_camera_fb_return(fb);
+  return ok;
+}
+
 // ── tick() ────────────────────────────────────────────────────────────────────
 // Edge-detection rules (security-oriented):
 //   UNKNOWN  : fires on any non-UNKNOWN → UNKNOWN transition (KNOWN/DETECTED → UNKNOWN

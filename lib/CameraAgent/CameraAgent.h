@@ -31,6 +31,10 @@ public:
   // Kept for API compatibility; safe to call or omit from loop().
   static void handleStreamClients() {}
 
+  // Capture a single frame as JPEG. Caller must free(*buf) after use.
+  // Returns false if camera is not ready or conversion fails.
+  static bool captureJpeg(uint8_t** buf, size_t* len);
+
   static bool          isInitialized()  { return _ok; }
   static unsigned long lastDetectedMs() { return _lastDetMs; }
   static FaceResult    lastRawResult()   { return _lastResult; }

@@ -15,6 +15,13 @@ public:
   static bool notify(const String& webhookUrl, AlertEvent event,
                      const String& message);
 
+  // Send a Discord webhook notification with a JPEG photo attachment.
+  // Uses multipart/form-data. Falls back to text-only notify() if jpegBuf is null.
+  // jpegBuf ownership stays with the caller (not freed here).
+  static bool notifyWithPhoto(const String& webhookUrl, AlertEvent event,
+                               const String& message,
+                               const uint8_t* jpegBuf, size_t jpegLen);
+
   // One-shot startup notification (e.g., boot IP announcement).
   // Intentionally does NOT update _failCooldownUntil or _lastNotifyMs so that
   // a failed boot message cannot suppress subsequent security-alert notifications.

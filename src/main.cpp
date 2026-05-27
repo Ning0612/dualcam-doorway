@@ -81,7 +81,22 @@ static void onAlert(AlertLevel level, const char* eventType) {
     String url = SettingsStore::getDiscordUrl();
     if (url.length() > 0) {
       String msg = String("[Agent1] Unknown visitor detected! Alert: ") + alertLevelToString(level);
-      bool sent = DiscordNotifier::notify(url, AlertEvent::UNKNOWN_VISITOR, msg);
+
+      uint8_t* jpegBuf = nullptr;
+      size_t   jpegLen = 0;
+      bool photoOk = CameraAgent::captureJpeg(&jpegBuf, &jpegLen);
+
+      bool sent = false;
+      if (photoOk) {
+        sent = DiscordNotifier::notifyWithPhoto(url, AlertEvent::UNKNOWN_VISITOR, msg, jpegBuf, jpegLen);
+        free(jpegBuf);
+        if (!sent) {
+          // Best-effort text fallback if photo upload failed (may be blocked by cooldown)
+          sent = DiscordNotifier::notify(url, AlertEvent::UNKNOWN_VISITOR, msg);
+        }
+      } else {
+        sent = DiscordNotifier::notify(url, AlertEvent::UNKNOWN_VISITOR, msg);
+      }
       logManager.logAlert(level, eventType, AlarmDecision::TRIGGER_ALARM, sent);
     } else {
       logManager.logAlert(level, eventType, AlarmDecision::TRIGGER_ALARM, false);
