@@ -423,9 +423,18 @@ String LogManager::getAlertLogPagedJson(uint32_t month, uint16_t page, uint16_t 
 
 // ── Statistics ────────────────────────────────────────────────────────────────
 
+static time_t _parseTimestamp(const char* ts) {
+  if (!ts || strlen(ts) < 19) return 0;
+  int y = 0, mo = 0, d = 0, h = 0, mi = 0, s = 0;
+  if (sscanf(ts, "%d-%d-%dT%d:%d:%d", &y, &mo, &d, &h, &mi, &s) < 6) return 0;
+  struct tm t = {};
+  t.tm_year = y - 1900; t.tm_mon = mo - 1; t.tm_mday = d;
+  t.tm_hour = h; t.tm_min = mi; t.tm_sec = s; t.tm_isdst = 0;
+  return mktime(&t);
+}
+
 String LogManager::getStatsJson(uint32_t month) {
   if (month == 0) month = _currentMonth();
-  // Reject obviously invalid YYYYMM values to prevent mktime computing wrong dates
   if (month != 0) {
     uint32_t mon = month % 100u;
     if (mon < 1 || mon > 12) {
@@ -437,8 +446,6 @@ String LogManager::getStatsJson(uint32_t month) {
   char todayStr[11]     = {};
   char weekDays[7][11]  = {};
   char weekLabels[7][3] = {};
-  // Explicit historical month: refTime is derived from month param alone, NTP not required.
-  // Only month==0 (current month) requires NTP to know which month we're in.
   bool hasTime = _ntpSynced() || (month != 0);
   static const char* DOW_ABBR[] = { "S","M","T","W","T","F","S" };
 
@@ -448,12 +455,11 @@ String LogManager::getStatsJson(uint32_t month) {
     if (month == curMonth) {
       refTime = time(nullptr);
     } else {
-      // Historical: use the last day of the requested month as reference
       uint32_t year = month / 100u;
       uint32_t mon  = month % 100u;
       struct tm lastDayTm = {};
       lastDayTm.tm_year  = (int)(year - 1900);
-      lastDayTm.tm_mon   = (int)mon;  // one past requested month (0-based); mday=0 = last day
+      lastDayTm.tm_mon   = (int)mon;
       lastDayTm.tm_mday  = 0;
       lastDayTm.tm_isdst = -1;
       refTime = mktime(&lastDayTm);
@@ -469,11 +475,21 @@ String LogManager::getStatsJson(uint32_t month) {
     }
   }
 
+  // Cross-type accumulators
+  uint32_t peakHours[6] = {};   // 4-hour buckets: 00-03, 04-07, 08-11, 12-15, 16-19, 20-23
+  char     lbNames[7][17] = {};
+  uint32_t lbCounts[7]   = {};
+  int      lbSize = 0;
+
   JsonDocument doc;
   doc["month"] = month;
   if (hasTime) {
     JsonArray wl = doc["week_labels"].to<JsonArray>();
     for (int i = 0; i < 7; i++) wl.add(weekLabels[i]);
+  }
+  if (_spiffsOk) {
+    doc["storage_used_kb"]  = (uint32_t)(SPIFFS.usedBytes()  / 1024u);
+    doc["storage_total_kb"] = (uint32_t)(SPIFFS.totalBytes() / 1024u);
   }
 
   static const char* types[] = { "door", "face", "alert" };
@@ -482,15 +498,29 @@ String LogManager::getStatsJson(uint32_t month) {
     uint32_t metaTotal = _spiffsOk ? _readMeta(type, month) : 0;
 
     JsonObject tobj = doc[type].to<JsonObject>();
-    tobj["month_total"] = metaTotal;
-    tobj["today"]       = 0;
-    tobj["week"]        = 0;
-    JsonArray daily     = tobj["daily_week"].to<JsonArray>();
+    tobj["month_total"]   = metaTotal;
+    tobj["today"]         = 0;
+    tobj["week"]          = 0;
+    tobj["day_count"]     = 0;
+    tobj["evening_count"] = 0;
+    tobj["night_count"]   = 0;
+    JsonArray daily = tobj["daily_week"].to<JsonArray>();
     for (int i = 0; i < 7; i++) daily.add(0);
 
-    if (ti == 0) { tobj["open_count"] = 0; tobj["close_count"] = 0; }
-    if (ti == 1) { tobj["known_count"] = 0; tobj["known_pct"] = 0; }
-    if (ti == 2) { tobj["red_count"] = 0; tobj["yellow_count"] = 0; tobj["last_at"] = ""; }
+    if (ti == 0) {
+      tobj["open_count"]    = 0; tobj["close_count"]   = 0;
+      tobj["avg_open_secs"] = 0; tobj["max_open_secs"] = 0;
+      tobj["unclosed"]      = false;
+    }
+    if (ti == 1) {
+      tobj["known_count"]   = 0; tobj["known_pct"]     = 0;
+      tobj["unknown_count"] = 0;
+    }
+    if (ti == 2) {
+      tobj["red_count"]     = 0; tobj["yellow_count"]  = 0;
+      tobj["last_at"]       = ""; tobj["trigger_count"] = 0;
+      tobj["discord_ok"]    = 0;
+    }
 
     if (!_spiffsOk || !hasTime || metaTotal == 0) continue;
 
@@ -498,6 +528,11 @@ String LogManager::getStatsJson(uint32_t month) {
     _getFilename(path, sizeof(path), type, month, false);
     File f = SPIFFS.open(path, "r");
     if (!f) continue;
+
+    time_t   lastOpenTs   = 0;
+    bool     lastWasOpen  = false;
+    uint32_t openDurTotal = 0, openDurMax = 0, openDurCount = 0;
+    uint32_t dayCount = 0, eveningCount = 0, nightCount = 0;
 
     char lineBuf[256];
     while (f.available()) {
@@ -512,36 +547,98 @@ String LogManager::getStatsJson(uint32_t month) {
       lineBuf[len] = '\0';
       if (len < 15 || overflow) continue;
 
-      // Extract date from {"timestamp":"YYYY-MM-DD..."}
       const char* ts = strstr(lineBuf, "\"timestamp\":\"");
       if (!ts) continue;
-      ts += 13;  // skip past "timestamp":"
+      ts += 13;
       char date[11] = {};
       strncpy(date, ts, 10);
 
-      if (strcmp(date, todayStr) == 0) {
-        tobj["today"] = (int)tobj["today"] + 1;
+      // Hour for day/night bucket and peak hours
+      int hour = (strlen(ts) >= 13 && isdigit((unsigned char)ts[11]) && isdigit((unsigned char)ts[12]))
+                   ? (int)((ts[11] - '0') * 10 + (ts[12] - '0')) : -1;
+      if (hour >= 0 && hour < 24) {
+        if      (hour >= 6  && hour < 18) dayCount++;
+        else if (hour >= 18)              eveningCount++;
+        else                              nightCount++;
+        if (ti == 0 || ti == 1) peakHours[hour / 4]++;
       }
+
+      if (strcmp(date, todayStr) == 0)
+        tobj["today"] = (int)tobj["today"] + 1;
       for (int i = 0; i < 7; i++) {
-        if (strcmp(date, weekDays[i]) == 0) {
-          daily[i] = (int)daily[i] + 1;
-          break;
-        }
+        if (strcmp(date, weekDays[i]) == 0) { daily[i] = (int)daily[i] + 1; break; }
       }
 
       if (ti == 0) {
-        if (strstr(lineBuf, "\"DOOR_OPEN\""))
-          tobj["open_count"] = (int)tobj["open_count"] + 1;
-        if (strstr(lineBuf, "\"DOOR_CLOSED\""))
-          tobj["close_count"] = (int)tobj["close_count"] + 1;
+        bool isOpen   = strstr(lineBuf, "\"DOOR_OPEN\"")   != nullptr;
+        bool isClosed = strstr(lineBuf, "\"DOOR_CLOSED\"") != nullptr;
+        if (isOpen)   tobj["open_count"]  = (int)tobj["open_count"]  + 1;
+        if (isClosed) tobj["close_count"] = (int)tobj["close_count"] + 1;
+
+        if (isOpen) {
+          lastOpenTs  = _parseTimestamp(ts);
+          lastWasOpen = true;
+        } else if (lastWasOpen && lastOpenTs > 0) {
+          time_t closeTs = _parseTimestamp(ts);
+          if (closeTs > lastOpenTs) {
+            uint32_t diff = (uint32_t)(closeTs - lastOpenTs);
+            if (diff < 3600u) {
+              openDurTotal += diff; openDurCount++;
+              if (diff > openDurMax) openDurMax = diff;
+            }
+          }
+          lastWasOpen = false;
+        }
+
+        // Leaderboard: related_user
+        const char* ru = strstr(lineBuf, "\"related_user\":\"");
+        if (ru) {
+          ru += 16;
+          char uname[17] = {};
+          int ui = 0;
+          while (ru[ui] && ru[ui] != '"' && ui < 16) { uname[ui] = ru[ui]; ui++; }
+          if (uname[0]) {
+            bool found = false;
+            for (int li = 0; li < lbSize; li++) {
+              if (strncmp(lbNames[li], uname, 16) == 0) { lbCounts[li]++; found = true; break; }
+            }
+            if (!found && lbSize < 7) { strncpy(lbNames[lbSize], uname, 16); lbCounts[lbSize++] = 1; }
+          }
+        }
+
       } else if (ti == 1) {
         if (strstr(lineBuf, "\"KNOWN_CONFIRMED\""))
           tobj["known_count"] = (int)tobj["known_count"] + 1;
+        if (strstr(lineBuf, "\"UNKNOWN_CONFIRMED\""))
+          tobj["unknown_count"] = (int)tobj["unknown_count"] + 1;
+
+        // Leaderboard: user_name (only when KNOWN_CONFIRMED)
+        if (strstr(lineBuf, "\"KNOWN_CONFIRMED\"")) {
+          const char* un = strstr(lineBuf, "\"user_name\":\"");
+          if (un) {
+            un += 13;
+            char uname[17] = {};
+            int ui = 0;
+            while (un[ui] && un[ui] != '"' && ui < 16) { uname[ui] = un[ui]; ui++; }
+            if (uname[0]) {
+              bool found = false;
+              for (int li = 0; li < lbSize; li++) {
+                if (strncmp(lbNames[li], uname, 16) == 0) { lbCounts[li]++; found = true; break; }
+              }
+              if (!found && lbSize < 7) { strncpy(lbNames[lbSize], uname, 16); lbCounts[lbSize++] = 1; }
+            }
+          }
+        }
+
       } else {
         if (strstr(lineBuf, "\"ALERT_RED\""))
           tobj["red_count"] = (int)tobj["red_count"] + 1;
         if (strstr(lineBuf, "\"ALERT_YELLOW\""))
           tobj["yellow_count"] = (int)tobj["yellow_count"] + 1;
+        if (strstr(lineBuf, "\"TRIGGER_ALARM\""))
+          tobj["trigger_count"] = (int)tobj["trigger_count"] + 1;
+        if (strstr(lineBuf, "\"discord_result\":true"))
+          tobj["discord_ok"] = (int)tobj["discord_ok"] + 1;
         char tsVal[32] = {};
         strncpy(tsVal, ts, 25);
         tobj["last_at"] = tsVal;
@@ -549,14 +646,40 @@ String LogManager::getStatsJson(uint32_t month) {
     }
     f.close();
 
+    tobj["day_count"]     = dayCount;
+    tobj["evening_count"] = eveningCount;
+    tobj["night_count"]   = nightCount;
+
+    if (ti == 0) {
+      tobj["unclosed"] = lastWasOpen;
+      if (openDurCount > 0) {
+        tobj["avg_open_secs"] = (int)((float)openDurTotal / openDurCount + 0.5f);
+        tobj["max_open_secs"] = openDurMax;
+      }
+    }
+
     int weekTotal = 0;
     for (int i = 0; i < 7; i++) weekTotal += (int)daily[i];
     tobj["week"] = weekTotal;
 
-    if (ti == 1 && metaTotal > 0) {
+    if (ti == 1 && metaTotal > 0)
       tobj["known_pct"] = (int)((float)(int)tobj["known_count"] / (float)metaTotal * 100.0f);
-    }
   }
+
+  // Sort leaderboard descending
+  for (int i = 1; i < lbSize; i++) {
+    uint32_t kc = lbCounts[i]; char kn[17]; strncpy(kn, lbNames[i], 16); kn[16] = '\0';
+    int j = i - 1;
+    while (j >= 0 && lbCounts[j] < kc) { lbCounts[j+1] = lbCounts[j]; strncpy(lbNames[j+1], lbNames[j], 16); j--; }
+    lbCounts[j+1] = kc; strncpy(lbNames[j+1], kn, 16);
+  }
+  JsonArray lb = doc["leaderboard"].to<JsonArray>();
+  for (int i = 0; i < lbSize; i++) {
+    JsonObject u = lb.add<JsonObject>(); u["name"] = lbNames[i]; u["count"] = lbCounts[i];
+  }
+
+  JsonArray ph = doc["peak_hours"].to<JsonArray>();
+  for (int i = 0; i < 6; i++) ph.add(peakHours[i]);
 
   String out;
   serializeJson(doc, out);

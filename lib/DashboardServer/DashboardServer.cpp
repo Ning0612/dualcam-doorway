@@ -243,6 +243,7 @@ static const char LOG_HTML[] =
   "<button onclick='prev()' id='pb' disabled>&larr; Prev</button>"
   "<button onclick='next()' id='nb' disabled>Next &rarr;</button>"
   "</div>"
+  "<div id='tl' style='margin:8px 0'></div>"
   "<div id='tbl'><p>Loading...</p></div>"
   "<script>"
   "function esc(v){return String(v===null||v===undefined?'':v)"
@@ -254,10 +255,38 @@ static const char LOG_HTML[] =
   "var h='<table><tr>'+keys.map(k=>'<th>'+esc(k)+'</th>').join('')+'</tr>';"
   "rows.forEach(function(row){h+='<tr>'+keys.map(k=>'<td>'+esc(row[k])+'</td>').join('')+'</tr>';});"
   "document.getElementById('tbl').innerHTML=h+'</table>';}"
+  "var LOG_TYPE='%LOG_TYPE%';"
+  "function getColor(r){"
+  "if(LOG_TYPE==='door')return r.door_state==='DOOR_OPEN'?'#dc3545':'#28a745';"
+  "if(LOG_TYPE==='face')return r.vote_result==='KNOWN_CONFIRMED'?'#28a745':r.vote_result==='UNKNOWN_CONFIRMED'?'#dc3545':'#aaa';"
+  "return r.alert_level==='ALERT_RED'?'#dc3545':'#ffc107';}"
+  "function getY(r){"
+  "if(LOG_TYPE==='door')return r.door_state==='DOOR_OPEN'?15:27;"
+  "if(LOG_TYPE==='face')return r.vote_result==='KNOWN_CONFIRMED'?15:r.vote_result==='UNKNOWN_CONFIRMED'?27:39;"
+  "return r.alert_level==='ALERT_RED'?15:27;}"
+  "function drawTimeline(rows){"
+  "var now=Date.now(),ws=now-86400000;"
+  "var s='<svg width=\"100%\" height=\"70\" viewBox=\"0 0 720 70\">';"
+  "s+='<line x1=\"0\" y1=\"50\" x2=\"720\" y2=\"50\" stroke=\"#ddd\"/>';"
+  "var lr=LOG_TYPE==='door'?[[15,'#dc3545','OPEN'],[27,'#28a745','CLOSE']]:"
+  "LOG_TYPE==='face'?[[15,'#28a745','KWN'],[27,'#dc3545','UNK'],[39,'#aaa','?']]:"
+  "[[15,'#dc3545','RED'],[27,'#ffc107','YLW']];"
+  "lr.forEach(function(l){s+='<text x=\"718\" y=\"'+(l[0]+4)+'\" font-size=\"7\" fill=\"'+l[1]+'\" text-anchor=\"end\">'+l[2]+'</text>';});"
+  "for(var i=0;i<=4;i++){var x=i*180,d=new Date(ws+i*21600000);"
+  "var lbl=i===4?'now':('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);"
+  "s+='<line x1=\"'+x+'\" y1=\"50\" x2=\"'+x+'\" y2=\"55\" stroke=\"#bbb\"/>';"
+  "s+='<text x=\"'+x+'\" y=\"67\" font-size=\"8\" fill=\"#888\" text-anchor=\"middle\">'+lbl+'</text>';}"
+  "rows.forEach(function(r){"
+  "var ts=r.timestamp||'';if(!ts)return;"
+  "var evtMs=new Date(ts).getTime();"
+  "if(isNaN(evtMs)||evtMs<ws||evtMs>now+300000)return;"
+  "var x=((evtMs-ws)/86400000*720).toFixed(1),c=getColor(r),y=getY(r),lbl=ts.substring(11,16);"
+  "s+='<circle cx=\"'+x+'\" cy=\"'+y+'\" r=\"5\" fill=\"'+c+'\" opacity=\"0.85\"><title>'+lbl+'</title></circle>';});"
+  "document.getElementById('tl').innerHTML=s+'</svg>';}"
   "function applyFilter(){"
   "var fi=document.getElementById('fi').value.toLowerCase();"
   "var rows=fi?allRows.filter(r=>JSON.stringify(r).toLowerCase().includes(fi)):allRows;"
-  "renderRows(rows);}"
+  "renderRows(rows);drawTimeline(rows);}"
   "function onMoChange(){pg=1;loadData();}"
   "function prev(){if(pg>1){pg--;loadData();}}"
   "function next(){if(pg*20<tot){pg++;loadData();}}"
@@ -302,18 +331,31 @@ static const char ANALYTICS_HTML[] =
   "<div class='col card'><div class='sub'>Door Events Today</div>"
   "<div class='num' id='dt'>-</div>"
   "<div class='sub'>Week: <span id='dw'>-</span> &bull; Month: <span id='dm'>-</span></div>"
-  "<div class='sub'>Open: <span id='do'>-</span> &bull; Closed: <span id='dco'>-</span></div></div>"
+  "<div class='sub'>Open: <span id='do'>-</span> &bull; Closed: <span id='dco'>-</span></div>"
+  "<div class='sub'>Night:<span id='dnt'>-</span> Day:<span id='ddy'>-</span> Eve:<span id='dev'>-</span></div>"
+  "<div class='sub'>Avg open:<span id='dao'>-</span> Max:<span id='dmo'>-</span>"
+  " &bull; <span id='duc' style='color:#dc3545'></span></div></div>"
   "<div class='col card'><div class='sub'>Face Recognitions Today</div>"
   "<div class='num' id='ft'>-</div>"
   "<div class='sub'>Week: <span id='fw'>-</span> &bull; Month: <span id='fm'>-</span></div>"
-  "<div class='sub'>Known%: <span id='fk'>-</span></div></div>"
+  "<div class='sub'>Known%: <span id='fk'>-</span> &bull; Unknown: <span id='fuc'>-</span></div>"
+  "<div class='sub'>Night: <span id='fnt'>-</span></div></div>"
   "<div class='col card'><div class='sub'>Alerts Today</div>"
   "<div class='numd' id='at'>-</div>"
   "<div class='sub'>Week: <span id='aw'>-</span> &bull; Month: <span id='am'>-</span></div>"
-  "<div class='sub'>Last: <span id='al'>none</span></div></div>"
+  "<div class='sub'>Last: <span id='al'>none</span></div>"
+  "<div class='sub'>Triggered: <span id='atr'>-</span> &bull; Discord OK: <span id='adk'>-</span></div></div>"
   "</div>"
   "<div class='card'><div class='sub'>Door Events (last 7 days)</div><div id='dch'></div></div>"
   "<div class='card'><div class='sub'>Face Events (last 7 days)</div><div id='fch'></div></div>"
+  "<div class='card'><div class='sub'>Peak Hours (door + face)</div><div id='phch'></div></div>"
+  "<div class='row'>"
+  "<div class='col card'><div class='sub'>Active Users (month)</div><div id='lb'>-</div></div>"
+  "<div class='col card'><div class='sub'>SPIFFS Storage</div>"
+  "<div id='sti' class='sub'>-</div>"
+  "<div style='background:#e0e0e0;border-radius:3px;height:6px;margin-top:4px'>"
+  "<div id='spb' style='background:#0070f3;height:6px;border-radius:3px;width:0'></div></div></div>"
+  "</div>"
   "<script>"
   "function drawBar(data,cid,lbl){"
   "var s='<svg width=\"100%\" height=\"80\" viewBox=\"0 0 210 80\">';"
@@ -343,8 +385,26 @@ static const char ANALYTICS_HTML[] =
   "document.getElementById('aw').textContent=ar.week||0;"
   "document.getElementById('am').textContent=ar.month_total||0;"
   "document.getElementById('al').textContent=ar.last_at?(ar.last_at.substring(0,16)):'none';"
+  "document.getElementById('dnt').textContent=dr.night_count||0;"
+  "document.getElementById('ddy').textContent=dr.day_count||0;"
+  "document.getElementById('dev').textContent=dr.evening_count||0;"
+  "document.getElementById('dao').textContent=dr.avg_open_secs?dr.avg_open_secs+'s':'-';"
+  "document.getElementById('dmo').textContent=dr.max_open_secs?dr.max_open_secs+'s':'-';"
+  "document.getElementById('duc').textContent=dr.unclosed?'⚠ Door open!':'';"
+  "document.getElementById('fnt').textContent=fr.night_count||0;"
+  "document.getElementById('fuc').textContent=fr.unknown_count||0;"
+  "document.getElementById('atr').textContent=ar.trigger_count||0;"
+  "document.getElementById('adk').textContent=(ar.discord_ok||0)+'/'+(ar.red_count||0);"
   "if(dr.daily_week)drawBar(dr.daily_week,'dch',d.week_labels);"
   "if(fr.daily_week)drawBar(fr.daily_week,'fch',d.week_labels);"
+  "if(d.peak_hours)drawBar(d.peak_hours,'phch',['00','04','08','12','16','20']);"
+  "if(d.leaderboard&&d.leaderboard.length){"
+  "document.getElementById('lb').innerHTML=d.leaderboard.map(function(u){"
+  "return '<b>'+esc(u.name)+'</b>&nbsp;'+u.count;}).join(' &bull; ');}"
+  "if(d.storage_total_kb){"
+  "var pct=Math.min(100,Math.round(d.storage_used_kb/d.storage_total_kb*100));"
+  "document.getElementById('sti').textContent=d.storage_used_kb+'KB / '+d.storage_total_kb+'KB ('+pct+'%)';"
+  "document.getElementById('spb').style.width=pct+'%';}"
   "}).catch(function(){});}"
   "fetch('/api/log/months').then(r=>r.json()).then(function(months){"
   "var sel=document.getElementById('mo');"
@@ -515,6 +575,7 @@ void DashboardServer::begin(WebServer& server,
     if (!requireAuthAndChangedPassword(server)) return;
     String page = LOG_HTML;
     page.replace("%TITLE%",     "Door Log");
+    page.replace("%LOG_TYPE%",  "door");
     page.replace("%API_RING%",  "/api/log/door");
     page.replace("%API_PAGED%", "/api/log/door/paged");
     server.send(200, "text/html", page);
@@ -524,6 +585,7 @@ void DashboardServer::begin(WebServer& server,
     if (!requireAuthAndChangedPassword(server)) return;
     String page = LOG_HTML;
     page.replace("%TITLE%",     "Face Log");
+    page.replace("%LOG_TYPE%",  "face");
     page.replace("%API_RING%",  "/api/log/face");
     page.replace("%API_PAGED%", "/api/log/face/paged");
     server.send(200, "text/html", page);
@@ -533,6 +595,7 @@ void DashboardServer::begin(WebServer& server,
     if (!requireAuthAndChangedPassword(server)) return;
     String page = LOG_HTML;
     page.replace("%TITLE%",     "Alert Log");
+    page.replace("%LOG_TYPE%",  "alert");
     page.replace("%API_RING%",  "/api/log/alert");
     page.replace("%API_PAGED%", "/api/log/alert/paged");
     server.send(200, "text/html", page);
