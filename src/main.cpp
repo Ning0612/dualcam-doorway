@@ -70,6 +70,7 @@ static void handleWifiLoss() {
 
 static void onAlert(AlertLevel level, const char* eventType) {
   Serial.printf("[Agent1] alert %s: %s\n", alertLevelToString(level), eventType);
+  LedController::setLevel(level);  // sync color before any blinking or branch logic
 
   if (level == AlertLevel::ALERT_RED) {
     LedController::setBlinking(true);
@@ -395,7 +396,18 @@ void loop() {
     lastStatusPubMs = millis();
   }
 
-  sm.tick();
+  {
+    static AlertLevel prevLevel = AlertLevel::ALERT_RED;
+    sm.tick();
+    AlertLevel nowLevel = sm.getAlertLevel();
+    if (nowLevel != prevLevel) {
+      prevLevel = nowLevel;  // always track; LED update guarded below
+      if (!sm.isAlarmActive()) {
+        LedController::setLevel(nowLevel);
+        LedController::setBlinking(false);
+      }
+    }
+  }
   handleWifiLoss();
   handleSerialInput();
 }
