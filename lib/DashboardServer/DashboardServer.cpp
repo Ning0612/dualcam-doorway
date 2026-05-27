@@ -183,7 +183,7 @@ static const char SETTINGS_HTML[] =
   "<label>Alert Duration (10-300 s)<br>"
   "<input type='number' name='buzzer_dur_s' min='10' max='300' value='%BUZZER_DUR_S%'></label>"
   "<button type='button' onclick='tstBz()'>Test</button>"
-  "<p style='font-size:.8em;color:#666'>Auto-silence after duration; alarm LED stays active.</p>"
+  "<p style='font-size:.8em;color:#666'>Alarm auto-cancels after duration (buzzer + LED both stop).</p>"
   "</fieldset>"
   "<button>Save</button>"
   "</form>"

@@ -38,8 +38,9 @@ void SecurityStateMachine::_triggerAlarm() {
 void SecurityStateMachine::_cancelAlarm() {
   if (!_alarmActive) return;
   _alarmActive    = false;
-  _knownConfirmed = false;  // invalidate stale green window; post-alarm level is base (Y/R)
-  _silenceBuzzer();         // stop buzzer (no-op if already auto-silenced)
+  _knownConfirmed = false;
+  _faceState      = FaceState::FACE_NO_FACE;  // clear stale FACE_KNOWN left by Condition C
+  _silenceBuzzer();
   _recalcAlertLevel();
   if (_onAlarmCancelled) _onAlarmCancelled();
 }
@@ -59,14 +60,12 @@ void SecurityStateMachine::onVoteResult(VoteResult result, const char* name, flo
     strncpy(_pendingDoorUser, _lastKnownUser, sizeof(_pendingDoorUser) - 1);
 
     // Clear pending decision wait — known user resolves the uncertainty.
-    // Do NOT cancel an already-triggered alarm; only Agent 2 CANCEL_ALARM should do that.
     _waitingForDecision = false;
 
     if (_onKnownConfirmed) _onKnownConfirmed(_lastKnownUser, _lastSimilarity);
 
-    // Condition C: known user confirmed while alarm buzzer is ringing → silence buzzer only.
-    // Alarm state stays active; only Agent 2 CANCEL_ALARM clears it.
-    if (_alarmActive && _buzzerActive) _silenceBuzzer();
+    // Condition C: known user confirmed while alarm is active → cancel alarm.
+    if (_alarmActive) _cancelAlarm();
 
     _recalcAlertLevel();
 
@@ -103,8 +102,8 @@ void SecurityStateMachine::onDoorChange(DoorState state) {
 
   if (state == DoorState::DOOR_CLOSED) {
     memset(_pendingDoorUser, 0, sizeof(_pendingDoorUser));
-    // Condition B: door closed while buzzer is ringing → silence buzzer, alarm stays active.
-    if (_alarmActive && _buzzerActive) _silenceBuzzer();
+    // Condition B: door closed while alarm is active → cancel alarm.
+    if (_alarmActive) _cancelAlarm();
   }
 }
 
@@ -152,9 +151,9 @@ void SecurityStateMachine::tick() {
     _recalcAlertLevel();
   }
 
-  // Condition A: buzzer auto-silence after duration (alarm state unchanged)
-  if (_buzzerActive && (now - _buzzerStartMs) >= _buzzerDurationMs) {
-    _silenceBuzzer();
+  // Condition A: alarm auto-cancel after buzzer duration expires.
+  if (_alarmActive && _buzzerActive && (now - _buzzerStartMs) >= _buzzerDurationMs) {
+    _cancelAlarm();
   }
 
   // Yellow-alert decision timeout → default to TRIGGER_ALARM

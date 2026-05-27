@@ -144,7 +144,7 @@ static void onBuzzerSilence() {
 }
 
 static void onAlarmCancelled() {
-  Serial.println("[Agent1] alarm cancelled by Agent 2");
+  Serial.println("[Agent1] alarm cancelled");
   BuzzerController::cancel();   // safety: ensure off even if already auto-silenced
   LedController::setBlinking(false);
   LedController::setLevel(sm.getAlertLevel());

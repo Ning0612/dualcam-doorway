@@ -16,6 +16,11 @@
 //   ALERT_RED  → immediate buzzer + LED blink + Discord + log
 //   ALERT_YELLOW → notify Agent 2 via callback; wait for AlarmDecision
 //                  (timeout ALARM_DECISION_TIMEOUT_MS → default TRIGGER_ALARM)
+//
+// Alarm auto-cancel conditions (any of the following cancels the active alarm):
+//   A. Buzzer duration expires (configurable, default 60 s)
+//   B. Door closes while alarm is active
+//   C. KNOWN_CONFIRMED vote received while alarm is active
 
 static constexpr unsigned long ALARM_DECISION_TIMEOUT_MS = 30000UL;
 static constexpr unsigned long KNOWN_GREEN_DURATION_MS   = 15000UL;
@@ -64,8 +69,8 @@ public:
   using CancelCallback = void(*)();
   void setOnAlarmCancelled(CancelCallback cb) { _onAlarmCancelled = cb; }
 
-  // Fired when buzzer is silenced while alarm remains active (conditions A/B/C).
-  // Also fired from _cancelAlarm() before _onAlarmCancelled.
+  // Fired when buzzer is silenced (either by auto-cancel or by _cancelAlarm()).
+  // Precedes _onAlarmCancelled in the call order.
   using SilenceCallback = void(*)();
   void setOnBuzzerSilence(SilenceCallback cb) { _onBuzzerSilence = cb; }
 
