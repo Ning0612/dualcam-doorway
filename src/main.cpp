@@ -238,18 +238,45 @@ static void handleSerialInput() {
 
   switch (c) {
     case 'h':
-      Serial.printf("[Agent1] Hall raw=%u  threshold=%u  hysteresis=±%d  door=%s\n",
-                    DoorSensor::getRaw(), SettingsStore::getHallThreshold(), HALL_HYSTERESIS,
+      Serial.printf("[Agent1] Hall raw=%u  lo=%u  hi=%u  hyst=±%d  door=%s\n",
+                    DoorSensor::getRaw(),
+                    SettingsStore::getHallLowerBound(),
+                    SettingsStore::getHallUpperBound(),
+                    HALL_HYSTERESIS,
                     DoorSensor::getState() == DoorState::DOOR_OPEN ? "OPEN" : "CLOSED");
       break;
     case 'H': {
+      // Press while door is CLOSED (magnet engaged). Auto-detects deflection direction
+      // and offsets the bound by 2*hyst so the closed reading is clearly outside the open zone.
       uint16_t raw = DoorSensor::getRaw();
-      if (!SettingsStore::setHallThreshold(raw)) {
-        Serial.printf("[Agent1] Hall threshold rejected: %u (valid range: %d-%d)\n",
-                      raw, HALL_HYSTERESIS + 1, 4095 - HALL_HYSTERESIS);
+      if (raw == 2048) {
+        Serial.println("[Agent1] Hall raw too close to midpoint; engage magnet then retry.");
+        break;
+      }
+      uint16_t lo = SettingsStore::getHallLowerBound();
+      uint16_t hi = SettingsStore::getHallUpperBound();
+      if (raw > 2048) {
+        // Positive deflection: update upper bound
+        int new_hi = (int)raw - 2 * (int)HALL_HYSTERESIS;
+        if (new_hi <= (int)lo + 2 * (int)HALL_HYSTERESIS) {
+          Serial.printf("[Agent1] Hall calibration rejected: raw=%u too close to lower bound.\n", raw);
+          break;
+        }
+        hi = (uint16_t)new_hi;
       } else {
-        DoorSensor::setThreshold(raw);
-        Serial.printf("[Agent1] Hall threshold saved: %u\n", raw);
+        // Negative deflection: update lower bound
+        int new_lo = (int)raw + 2 * (int)HALL_HYSTERESIS;
+        if (new_lo >= (int)hi - 2 * (int)HALL_HYSTERESIS) {
+          Serial.printf("[Agent1] Hall calibration rejected: raw=%u too close to upper bound.\n", raw);
+          break;
+        }
+        lo = (uint16_t)new_lo;
+      }
+      if (!SettingsStore::setHallBounds(lo, hi)) {
+        Serial.printf("[Agent1] Hall bounds rejected: lo=%u hi=%u\n", lo, hi);
+      } else {
+        DoorSensor::setBounds(lo, hi);
+        Serial.printf("[Agent1] Hall bounds saved: lo=%u hi=%u\n", lo, hi);
       }
       break;
     }
@@ -340,9 +367,10 @@ void setup() {
   sm.setBuzzerDuration(ConfigManager::getBuzzerDurationMs());
 
   // Hall sensor
-  uint16_t hallThresh = SettingsStore::getHallThreshold();
-  Serial.printf("[Agent1] Hall threshold: %u\n", hallThresh);
-  DoorSensor::begin(PIN_HALL, hallThresh, HALL_HYSTERESIS);
+  uint16_t hallLo = SettingsStore::getHallLowerBound();
+  uint16_t hallHi = SettingsStore::getHallUpperBound();
+  Serial.printf("[Agent1] Hall bounds: lo=%u hi=%u\n", hallLo, hallHi);
+  DoorSensor::begin(PIN_HALL, hallLo, hallHi, HALL_HYSTERESIS);
   DoorSensor::setOnChange(onDoorChange);
 
   // Log system

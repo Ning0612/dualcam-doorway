@@ -85,7 +85,7 @@ static const char DASHBOARD_HTML[] =
   "a2.style.color=d.agent2_online?'#155724':'#721c24';"
   "document.getElementById('lku').textContent=d.last_known_user||'—';"
   "document.getElementById('up').textContent=fmt(d.uptime||0);"
-  "document.getElementById('hall').textContent='raw: '+d.hall_raw+' / threshold: '+d.hall_threshold;"
+  "document.getElementById('hall').textContent='raw: '+d.hall_raw+' / zone: '+d.hall_lower+'-'+d.hall_upper;"
   "if(d.face_count!==undefined)document.getElementById('fc').textContent=d.face_count;"
   "var r=document.getElementById('raw');"
   "if(d.face_result==='KNOWN'){r.className='bdg gr';"
@@ -171,11 +171,13 @@ static const char SETTINGS_HTML[] =
   "<label>Port<br>"
   "<input type='number' name='mqtt_port' min='1' max='65535' value='%MQTT_PORT%'></label>"
   "</fieldset>"
-  "<fieldset><legend>Hall Sensor Threshold</legend>"
-  "<label>Threshold (0-4095)<br>"
-  "<input type='number' name='hall_threshold' min='0' max='4095' value='%HALL_THRESH%'></label>"
+  "<fieldset><legend>Hall Sensor Bounds</legend>"
+  "<label>Lower Bound (0-4095)<br>"
+  "<input type='number' name='hall_lower' min='0' max='4095' value='%HALL_LOWER%'></label>"
+  "<label style='margin-top:8px;display:block'>Upper Bound (0-4095)<br>"
+  "<input type='number' name='hall_upper' min='0' max='4095' value='%HALL_UPPER%'></label>"
   "<p style='font-size:.8em;color:#666'>Current raw: %HALL_RAW% &mdash; "
-  "set between closed and open readings.</p>"
+  "door OPEN when raw is between lower and upper bounds.</p>"
   "</fieldset>"
   "<fieldset><legend>Buzzer</legend>"
   "<label>Frequency (200-8000 Hz)<br>"
@@ -333,8 +335,9 @@ void DashboardServer::begin(WebServer& server,
     doc["last_known_user"] = _sm->getLastKnownUser();
     doc["presence_state"]  = "";   // updated by AgentComm callback; reflected via sm
     doc["uptime"]          = millis();
-    doc["hall_raw"]        = DoorSensor::getRaw();
-    doc["hall_threshold"]  = SettingsStore::getHallThreshold();
+    doc["hall_raw"]   = DoorSensor::getRaw();
+    doc["hall_lower"] = SettingsStore::getHallLowerBound();
+    doc["hall_upper"] = SettingsStore::getHallUpperBound();
     doc["face_count"]      = FaceRecognizer::count();
     doc["face_max"]        = FaceRecognizer::MAX_FACES;
 
@@ -429,7 +432,8 @@ void DashboardServer::begin(WebServer& server,
     page.replace("%DISCORD_URL%", htmlAttrEscape(SettingsStore::getDiscordUrl()));
     page.replace("%MQTT_BROKER%", htmlAttrEscape(ConfigManager::getMqttBroker()));
     page.replace("%MQTT_PORT%",   String(ConfigManager::getMqttPort()));
-    page.replace("%HALL_THRESH%", String(SettingsStore::getHallThreshold()));
+    page.replace("%HALL_LOWER%",  String(SettingsStore::getHallLowerBound()));
+    page.replace("%HALL_UPPER%",  String(SettingsStore::getHallUpperBound()));
     page.replace("%HALL_RAW%",    String(DoorSensor::getRaw()));
     page.replace("%BUZZER_FREQ%", String(ConfigManager::getBuzzerFreq()));
     page.replace("%BUZZER_DUR_S%",String(ConfigManager::getBuzzerDurationMs() / 1000));
@@ -502,24 +506,29 @@ void DashboardServer::begin(WebServer& server,
       }
     }
 
-    // Hall threshold
-    if (server.hasArg("hall_threshold")) {
-      String hallArg = server.arg("hall_threshold");
-      bool numeric   = hallArg.length() > 0;
-      for (size_t i = 0; i < hallArg.length() && numeric; i++) {
-        if (!isdigit((unsigned char)hallArg[i])) numeric = false;
+    // Hall sensor bounds
+    if (server.hasArg("hall_lower") || server.hasArg("hall_upper")) {
+      String loArg = server.arg("hall_lower");
+      String hiArg = server.arg("hall_upper");
+      bool loNum = loArg.length() > 0;
+      bool hiNum = hiArg.length() > 0;
+      for (size_t i = 0; i < loArg.length() && loNum; i++) {
+        if (!isdigit((unsigned char)loArg[i])) loNum = false;
       }
-      if (!numeric) {
-        msg += "<p class='err'>Hall threshold must be a number.</p>";
+      for (size_t i = 0; i < hiArg.length() && hiNum; i++) {
+        if (!isdigit((unsigned char)hiArg[i])) hiNum = false;
+      }
+      if (!loNum || !hiNum) {
+        msg += "<p class='err'>Hall bounds must be numbers.</p>";
       } else {
-        int val = hallArg.toInt();
-        if (!SettingsStore::setHallThreshold((uint16_t)val)) {
-          msg += "<p class='err'>Hall threshold must be between " +
-                 String(HALL_HYSTERESIS + 1) + " and " +
-                 String(4095 - HALL_HYSTERESIS) + ".</p>";
+        uint16_t lo = (uint16_t)loArg.toInt();
+        uint16_t hi = (uint16_t)hiArg.toInt();
+        if (!SettingsStore::setHallBounds(lo, hi)) {
+          msg += "<p class='err'>Hall bounds invalid (need lower &lt; upper, gap &gt; " +
+                 String(2 * HALL_HYSTERESIS) + ").</p>";
         } else {
-          DoorSensor::setThreshold((uint16_t)val);
-          msg += "<p class='ok'>Hall threshold saved.</p>";
+          DoorSensor::setBounds(lo, hi);
+          msg += "<p class='ok'>Hall bounds saved.</p>";
         }
       }
     }
@@ -530,7 +539,8 @@ void DashboardServer::begin(WebServer& server,
     page.replace("%DISCORD_URL%", htmlAttrEscape(SettingsStore::getDiscordUrl()));
     page.replace("%MQTT_BROKER%", htmlAttrEscape(ConfigManager::getMqttBroker()));
     page.replace("%MQTT_PORT%",   String(ConfigManager::getMqttPort()));
-    page.replace("%HALL_THRESH%", String(SettingsStore::getHallThreshold()));
+    page.replace("%HALL_LOWER%",  String(SettingsStore::getHallLowerBound()));
+    page.replace("%HALL_UPPER%",  String(SettingsStore::getHallUpperBound()));
     page.replace("%HALL_RAW%",    String(DoorSensor::getRaw()));
     page.replace("%BUZZER_FREQ%", String(ConfigManager::getBuzzerFreq()));
     page.replace("%BUZZER_DUR_S%",String(ConfigManager::getBuzzerDurationMs() / 1000));

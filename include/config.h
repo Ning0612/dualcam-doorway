@@ -25,8 +25,12 @@
 #define DASHBOARD_SESSION_TTL_MS 1800000UL  // 30 min inactivity
 
 // Hall-effect door sensor
-#define HALL_DEFAULT_THRESHOLD    2048    // mid-scale starting point; calibrate with 'H' key
-#define HALL_HYSTERESIS            150    // dead-zone on each side of threshold (±0–4095 scale)
+// Door OPEN when: lowerBound < raw < upperBound (with hysteresis on each edge).
+// Door CLOSED when: raw < lowerBound or raw > upperBound (with hysteresis).
+// Calibrate with serial 'H' key (press while door is CLOSED and magnet is engaged).
+#define HALL_DEFAULT_LOWER         1000   // open-zone lower edge; raw at or below → CLOSED
+#define HALL_DEFAULT_UPPER         3000   // open-zone upper edge; raw at or above → CLOSED
+#define HALL_HYSTERESIS             150   // dead-zone width on each side of each bound
 #define HALL_SAMPLE_INTERVAL_MS     50UL  // analog read rate
 #define DOOR_DEBOUNCE_MS           200UL  // require stable state for this long before firing
 

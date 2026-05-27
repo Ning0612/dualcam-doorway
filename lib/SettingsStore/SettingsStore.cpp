@@ -7,7 +7,8 @@ static const char* NVS_NS    = "agent_cfg";
 static const char* PW_HASH   = "dashboard_pw";
 static const char* PW_CHGD   = "pw_changed";
 static const char* DISC_URL  = "discord_url";
-static const char* HALL_KEY  = "hall_thresh";
+static const char* HALL_LO_KEY = "hall_lo";
+static const char* HALL_HI_KEY = "hall_hi";
 static const char* SALT      = "dualcam_s2024";
 
 void SettingsStore::init() {
@@ -102,24 +103,33 @@ String SettingsStore::hashPassword(const String& pw) {
   return String(buf);
 }
 
-uint16_t SettingsStore::getHallThreshold() {
+uint16_t SettingsStore::getHallLowerBound() {
   Preferences prefs;
   prefs.begin(NVS_NS, true);
-  uint16_t v = (uint16_t)prefs.getUInt(HALL_KEY, HALL_DEFAULT_THRESHOLD);
+  uint16_t v = (uint16_t)prefs.getUInt(HALL_LO_KEY, HALL_DEFAULT_LOWER);
   prefs.end();
   return v;
 }
 
-bool SettingsStore::setHallThreshold(uint16_t value) {
-  // Reject values where hysteresis window would reach ADC rail (0 or 4095).
-  // Valid range: [HALL_HYSTERESIS+1, 4095-HALL_HYSTERESIS-1] ≈ [151, 3944].
-  if (value <= HALL_HYSTERESIS || value >= (uint16_t)(4096 - HALL_HYSTERESIS)) return false;
+uint16_t SettingsStore::getHallUpperBound() {
+  Preferences prefs;
+  prefs.begin(NVS_NS, true);
+  uint16_t v = (uint16_t)prefs.getUInt(HALL_HI_KEY, HALL_DEFAULT_UPPER);
+  prefs.end();
+  return v;
+}
+
+bool SettingsStore::setHallBounds(uint16_t lower, uint16_t upper) {
+  if (lower >= upper) return false;
+  if ((int)upper - (int)lower <= 2 * (int)HALL_HYSTERESIS) return false;
+  if (upper > 4095) return false;
   Preferences prefs;
   if (!prefs.begin(NVS_NS, false)) {
     Serial.println("[SettingsStore] ERROR: NVS begin() failed.");
     return false;
   }
-  bool ok = prefs.putUInt(HALL_KEY, value) > 0;
+  bool ok = (prefs.putUInt(HALL_LO_KEY, lower) > 0) &&
+            (prefs.putUInt(HALL_HI_KEY,  upper) > 0);
   prefs.end();
   return ok;
 }

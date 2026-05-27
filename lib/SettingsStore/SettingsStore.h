@@ -20,10 +20,12 @@ public:
   // Validates URL prefix and length, then stores. Pass "" to clear.
   static bool setDiscordUrl(const String& url);
 
-  // Hall-effect door sensor threshold (indoor only). Range 0-4095 (12-bit ADC).
-  // Default HALL_DEFAULT_THRESHOLD until explicitly saved.
-  static uint16_t getHallThreshold();
-  static bool     setHallThreshold(uint16_t value);
+  // Hall-effect door sensor open-zone bounds. Range 0-4095 (12-bit ADC).
+  // Door OPEN when lowerBound < raw < upperBound. Returns defaults if not set.
+  static uint16_t getHallLowerBound();
+  static uint16_t getHallUpperBound();
+  // Validates: lower < upper and upper - lower > 2 * HALL_HYSTERESIS.
+  static bool     setHallBounds(uint16_t lower, uint16_t upper);
 
   // SHA-256(salt + pw) → 64-char hex string. Public for SessionAuth use.
   static String hashPassword(const String& pw);

@@ -4,17 +4,21 @@
 
 // Hall-effect door sensor driver.
 //
-// Reads 8 ADC samples and averages to reduce noise. Uses hysteresis to prevent
-// rapid toggling near the threshold, and debouncing to require a stable new
-// state before firing the onChange callback.
+// Dual-bound detection: door is OPEN when ADC reading is between lowerBound and
+// upperBound (no magnetic field). Door is CLOSED when reading falls outside either
+// bound (magnetic field detected, regardless of polarity).
 //
-// Calibration: use Serial 'h' / 'H' commands in main.cpp, or call setThreshold().
+// Hysteresis prevents chatter near the boundary edges. Dead zone: readings
+// within one hysteresis width of a bound keep the current state.
+//
+// Calibrate: press serial 'H' while the door is CLOSED with the magnet engaged.
+// The driver auto-detects deflection direction and offsets the bound accordingly.
 class DoorSensor {
 public:
-  // pin:       analog input GPIO (ADC1 only; ADC2 does not work with WiFi).
-  // threshold: ADC mid-point; below = OPEN, above = CLOSED.
-  // hysteresis: dead-zone width on each side of threshold.
-  static void begin(uint8_t pin, uint16_t threshold, uint16_t hysteresis);
+  // lowerBound: lower edge of the open zone (raw below this = CLOSED).
+  // upperBound: upper edge of the open zone (raw above this = CLOSED).
+  // Requires: upperBound - lowerBound > 2 * hysteresis. Falls back to defaults if invalid.
+  static void begin(uint8_t pin, uint16_t lowerBound, uint16_t upperBound, uint16_t hysteresis);
 
   // Call every loop() iteration. Fires onChange callback on confirmed transitions.
   static void tick();
@@ -22,8 +26,9 @@ public:
   static DoorState getState();
   static uint16_t  getRaw();
 
-  // Update threshold at runtime (e.g., from settings save).
-  static void setThreshold(uint16_t t);
+  // Update bounds at runtime (e.g., from settings save or serial calibration).
+  // No-op if bounds are invalid (lower >= upper or gap <= 2 * hysteresis).
+  static void setBounds(uint16_t lower, uint16_t upper);
 
   // Callback fired on every confirmed DoorState transition.
   static void setOnChange(void (*cb)(DoorState newState));
