@@ -32,8 +32,7 @@ void LedController::begin(uint8_t dataPin) {
   _strip->begin();
   _strip->setBrightness(BRIGHTNESS);
   _strip->clear();
-  _strip->show();
-  _applyColor(true);  // boot default: RED (Agent 2 offline)
+  _strip->show();  // boot: off (updateLed() will set correct state on first loop)
 }
 
 void LedController::setLevel(AlertLevel level) {
@@ -47,6 +46,22 @@ void LedController::setBlinking(bool enable) {
     _ledOn = true;
     _applyColor(true);
   }
+}
+
+void LedController::setWhite() {
+  if (!_strip) return;
+  _blinking = false;
+  _ledOn    = true;
+  _strip->setPixelColor(0, _strip->Color(255, 255, 255));
+  _strip->show();
+}
+
+void LedController::setOff() {
+  if (!_strip) return;
+  _blinking = false;
+  _ledOn    = true;
+  _strip->setPixelColor(0, 0);
+  _strip->show();
 }
 
 void LedController::tick() {

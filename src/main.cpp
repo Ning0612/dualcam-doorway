@@ -70,10 +70,8 @@ static void handleWifiLoss() {
 
 static void onAlert(AlertLevel level, const char* eventType) {
   Serial.printf("[Agent1] alert %s: %s\n", alertLevelToString(level), eventType);
-  LedController::setLevel(level);  // sync color before any blinking or branch logic
 
   if (level == AlertLevel::ALERT_RED) {
-    LedController::setBlinking(true);
     BuzzerController::trigger();
 
     // Publish escalation so Agent 2 sees the final alarm state (e.g., after decision timeout)
@@ -130,13 +128,7 @@ static void onKnownConfirmed(const char* name, float similarity) {
   logManager.logFace(FaceState::FACE_KNOWN, VoteResult::KNOWN_CONFIRMED, name, similarity);
   AgentComm::publishFace(name, similarity);
 
-  // Only switch to green and silence alarm indicators if no active alarm is running.
-  // An active alarm (triggered by unknown visitor) must not be cancelled by face recognition alone.
-  if (!sm.isAlarmActive()) {
-    LedController::setLevel(AlertLevel::ALERT_GREEN);
-    LedController::setBlinking(false);
-    BuzzerController::cancel();
-  }
+  // LED is handled by updateLed() in loop(); buzzer is silenced by _onBuzzerSilence callback.
 }
 
 static void onBuzzerSilence() {
@@ -147,8 +139,7 @@ static void onBuzzerSilence() {
 static void onAlarmCancelled() {
   Serial.println("[Agent1] alarm cancelled");
   BuzzerController::cancel();   // safety: ensure off even if already auto-silenced
-  LedController::setBlinking(false);
-  LedController::setLevel(sm.getAlertLevel());
+  // LED is handled by updateLed() in loop().
 }
 
 // ── AgentComm callbacks ───────────────────────────────────────────────────────
@@ -157,9 +148,7 @@ static void onPresence(bool occupied, int score) {
   Serial.printf("[Agent1] presence: %s (score=%d)\n",
                 occupied ? "OCCUPIED" : "UNOCCUPIED", score);
   sm.onPresence(occupied);
-  // LED follows new alert level
-  LedController::setLevel(sm.getAlertLevel());
-  if (!sm.isAlarmActive()) LedController::setBlinking(false);
+  // LED is handled by updateLed() in loop().
 }
 
 static void onAlarmDecision(AlarmDecision decision) {
@@ -177,8 +166,61 @@ static void onAlarmDecision(AlarmDecision decision) {
 static void onAgent2Connection(bool connected) {
   Serial.printf("[Agent1] Agent2 MQTT %s\n", connected ? "connected" : "disconnected");
   sm.onAgent2Online(connected);
-  LedController::setLevel(sm.getAlertLevel());
-  if (!sm.isAlarmActive()) LedController::setBlinking(false);
+  // LED is handled by updateLed() in loop().
+}
+
+// ── LED synthesis ─────────────────────────────────────────────────────────────
+//
+// Single source of truth for LED state. Priority:
+//   1. Alarm active  → red blinking
+//   2. ALERT_GREEN   → green solid (known-confirmed 15 s window)
+//   3. Face detected → white solid (fill light for recognition)
+//   4. Idle          → off
+//
+// Called every loop() after all state updates; only writes to hardware when
+// the desired mode changes (avoids NeoPixel show() on every tick).
+static void updateLed() {
+  enum class LedWant : uint8_t { Off, White, Green, RedBlink };
+
+  LedWant want;
+  if (sm.isAlarmActive()) {
+    want = LedWant::RedBlink;
+  } else if (sm.getAlertLevel() == AlertLevel::ALERT_GREEN) {
+    want = LedWant::Green;
+  } else if (CameraAgent::isInitialized()) {
+    FaceResult raw = CameraAgent::lastRawResult();
+    // Only light up for actual face presence; ignore NONE and CAMERA_ERROR.
+    if (raw == FaceResult::DETECTED || raw == FaceResult::KNOWN || raw == FaceResult::UNKNOWN) {
+      want = LedWant::White;
+    } else {
+      want = LedWant::Off;
+    }
+  } else {
+    want = LedWant::Off;
+  }
+
+  static LedWant prevWant    = LedWant::Off;
+  static bool    initialized = false;
+  if (initialized && want == prevWant) return;
+  initialized = true;
+  prevWant = want;
+
+  switch (want) {
+    case LedWant::RedBlink:
+      LedController::setLevel(AlertLevel::ALERT_RED);
+      LedController::setBlinking(true);
+      break;
+    case LedWant::Green:
+      LedController::setLevel(AlertLevel::ALERT_GREEN);
+      LedController::setBlinking(false);
+      break;
+    case LedWant::White:
+      LedController::setWhite();
+      break;
+    case LedWant::Off:
+      LedController::setOff();
+      break;
+  }
 }
 
 // ── DoorSensor callback ───────────────────────────────────────────────────────
@@ -275,7 +317,6 @@ void setup() {
   // Actuators first (visual boot indicator)
   LedController::begin(PIN_LED_DATA);
   BuzzerController::begin(PIN_BUZZER, BUZZER_DEFAULT_FREQ_HZ);
-  LedController::setLevel(AlertLevel::ALERT_RED);  // default: red (Agent 2 offline)
 
   // WiFi provisioning — blocks until connected or 5-min AP timeout
   ConfigPortal::begin("Agent1-Setup");
@@ -396,18 +437,8 @@ void loop() {
     lastStatusPubMs = millis();
   }
 
-  {
-    static AlertLevel prevLevel = AlertLevel::ALERT_RED;
-    sm.tick();
-    AlertLevel nowLevel = sm.getAlertLevel();
-    if (nowLevel != prevLevel) {
-      prevLevel = nowLevel;  // always track; LED update guarded below
-      if (!sm.isAlarmActive()) {
-        LedController::setLevel(nowLevel);
-        LedController::setBlinking(false);
-      }
-    }
-  }
+  sm.tick();
+  updateLed();
   handleWifiLoss();
   handleSerialInput();
 }

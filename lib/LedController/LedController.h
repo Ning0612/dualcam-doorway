@@ -2,14 +2,17 @@
 #include <Arduino.h>
 #include "states.h"
 
-// WS2812B (NeoPixel) RGB LED driver driven by AlertLevel.
-// Uses Adafruit NeoPixel library; pixel order must be NEO_GRB (standard WS2812B).
+// WS2812B (NeoPixel) RGB LED driver.
 // Call tick() every loop() iteration to handle blinking.
 //
-// Color mapping:
-//   ALERT_GREEN  → green solid
-//   ALERT_YELLOW → yellow solid
-//   ALERT_RED    → red solid (blinking when alarm active)
+// Display priority (highest wins):
+//   isAlarmActive  → red blinking (250 ms)
+//   ALERT_GREEN    → green solid (known-confirmed window)
+//   face detected  → white solid (fill light for recognition)
+//   idle           → off
+//
+// Use updateLed() in main loop to apply the above logic automatically.
+// setWhite() / setOff() bypass the AlertLevel mapping for direct control.
 class LedController {
 public:
   // dataPin: WS2812B data line GPIO (e.g. PIN_LED_DATA).
@@ -20,6 +23,12 @@ public:
 
   // Enable or disable blinking (250 ms period). Blinking color follows setLevel().
   static void setBlinking(bool enable);
+
+  // White fill light (clears blinking).
+  static void setWhite();
+
+  // Turn LED off (clears blinking).
+  static void setOff();
 
   // Call every loop() iteration to apply blinking.
   static void tick();
