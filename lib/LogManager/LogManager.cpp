@@ -476,10 +476,14 @@ String LogManager::getStatsJson(uint32_t month) {
   }
 
   // Cross-type accumulators
-  uint32_t peakHours[6] = {};   // 4-hour buckets: 00-03, 04-07, 08-11, 12-15, 16-19, 20-23
+  uint32_t peakHours[6]   = {};
   char     lbNames[7][17] = {};
-  uint32_t lbCounts[7]   = {};
+  uint32_t lbCounts[7]    = {};
+  uint32_t lbDailys[7][7] = {};   // leaderboard user × weekday (face KNOWN_CONFIRMED)
   int      lbSize = 0;
+  uint32_t dailyOpen[7]    = {};  // door open per weekday
+  uint32_t dailyClose[7]   = {};  // door close per weekday
+  uint32_t dailyUnknown[7] = {};  // face unknown per weekday
 
   JsonDocument doc;
   doc["month"] = month;
@@ -565,8 +569,9 @@ String LogManager::getStatsJson(uint32_t month) {
 
       if (strcmp(date, todayStr) == 0)
         tobj["today"] = (int)tobj["today"] + 1;
+      int dayIdx = -1;
       for (int i = 0; i < 7; i++) {
-        if (strcmp(date, weekDays[i]) == 0) { daily[i] = (int)daily[i] + 1; break; }
+        if (strcmp(date, weekDays[i]) == 0) { daily[i] = (int)daily[i] + 1; dayIdx = i; break; }
       }
 
       if (ti == 0) {
@@ -574,6 +579,10 @@ String LogManager::getStatsJson(uint32_t month) {
         bool isClosed = strstr(lineBuf, "\"DOOR_CLOSED\"") != nullptr;
         if (isOpen)   tobj["open_count"]  = (int)tobj["open_count"]  + 1;
         if (isClosed) tobj["close_count"] = (int)tobj["close_count"] + 1;
+        if (dayIdx >= 0) {
+          if (isOpen)   dailyOpen[dayIdx]++;
+          if (isClosed) dailyClose[dayIdx]++;
+        }
 
         if (isOpen) {
           lastOpenTs  = _parseTimestamp(ts);
@@ -607,13 +616,14 @@ String LogManager::getStatsJson(uint32_t month) {
         }
 
       } else if (ti == 1) {
-        if (strstr(lineBuf, "\"KNOWN_CONFIRMED\""))
-          tobj["known_count"] = (int)tobj["known_count"] + 1;
-        if (strstr(lineBuf, "\"UNKNOWN_CONFIRMED\""))
-          tobj["unknown_count"] = (int)tobj["unknown_count"] + 1;
+        bool isKnown   = strstr(lineBuf, "\"KNOWN_CONFIRMED\"")   != nullptr;
+        bool isUnknown = strstr(lineBuf, "\"UNKNOWN_CONFIRMED\"") != nullptr;
+        if (isKnown)   tobj["known_count"]   = (int)tobj["known_count"]   + 1;
+        if (isUnknown) tobj["unknown_count"] = (int)tobj["unknown_count"] + 1;
+        if (isUnknown && dayIdx >= 0) dailyUnknown[dayIdx]++;
 
         // Leaderboard: user_name (only when KNOWN_CONFIRMED)
-        if (strstr(lineBuf, "\"KNOWN_CONFIRMED\"")) {
+        if (isKnown) {
           const char* un = strstr(lineBuf, "\"user_name\":\"");
           if (un) {
             un += 13;
@@ -623,9 +633,18 @@ String LogManager::getStatsJson(uint32_t month) {
             if (uname[0]) {
               bool found = false;
               for (int li = 0; li < lbSize; li++) {
-                if (strncmp(lbNames[li], uname, 16) == 0) { lbCounts[li]++; found = true; break; }
+                if (strncmp(lbNames[li], uname, 16) == 0) {
+                  lbCounts[li]++;
+                  if (dayIdx >= 0) lbDailys[li][dayIdx]++;
+                  found = true; break;
+                }
               }
-              if (!found && lbSize < 7) { strncpy(lbNames[lbSize], uname, 16); lbCounts[lbSize++] = 1; }
+              if (!found && lbSize < 7) {
+                strncpy(lbNames[lbSize], uname, 16);
+                lbCounts[lbSize] = 1;
+                if (dayIdx >= 0) lbDailys[lbSize][dayIdx] = 1;
+                lbSize++;
+              }
             }
           }
         }
@@ -656,26 +675,44 @@ String LogManager::getStatsJson(uint32_t month) {
         tobj["avg_open_secs"] = (int)((float)openDurTotal / openDurCount + 0.5f);
         tobj["max_open_secs"] = openDurMax;
       }
+      JsonArray doa = tobj["daily_open"].to<JsonArray>();
+      JsonArray dca = tobj["daily_close"].to<JsonArray>();
+      for (int i = 0; i < 7; i++) { doa.add(dailyOpen[i]); dca.add(dailyClose[i]); }
     }
 
     int weekTotal = 0;
     for (int i = 0; i < 7; i++) weekTotal += (int)daily[i];
     tobj["week"] = weekTotal;
 
-    if (ti == 1 && metaTotal > 0)
+    if (ti == 1 && metaTotal > 0) {
       tobj["known_pct"] = (int)((float)(int)tobj["known_count"] / (float)metaTotal * 100.0f);
+      JsonArray dua = tobj["daily_unknown"].to<JsonArray>();
+      for (int i = 0; i < 7; i++) dua.add(dailyUnknown[i]);
+    }
   }
 
-  // Sort leaderboard descending
+  // Sort leaderboard descending (sort lbDailys alongside)
   for (int i = 1; i < lbSize; i++) {
-    uint32_t kc = lbCounts[i]; char kn[17]; strncpy(kn, lbNames[i], 16); kn[16] = '\0';
+    uint32_t kc = lbCounts[i];
+    char kn[17]; strncpy(kn, lbNames[i], 16); kn[16] = '\0';
+    uint32_t kd[7]; memcpy(kd, lbDailys[i], sizeof(kd));
     int j = i - 1;
-    while (j >= 0 && lbCounts[j] < kc) { lbCounts[j+1] = lbCounts[j]; strncpy(lbNames[j+1], lbNames[j], 16); j--; }
-    lbCounts[j+1] = kc; strncpy(lbNames[j+1], kn, 16);
+    while (j >= 0 && lbCounts[j] < kc) {
+      lbCounts[j+1] = lbCounts[j];
+      strncpy(lbNames[j+1], lbNames[j], 16);
+      memcpy(lbDailys[j+1], lbDailys[j], sizeof(lbDailys[j]));
+      j--;
+    }
+    lbCounts[j+1] = kc;
+    strncpy(lbNames[j+1], kn, 16);
+    memcpy(lbDailys[j+1], kd, sizeof(kd));
   }
   JsonArray lb = doc["leaderboard"].to<JsonArray>();
   for (int i = 0; i < lbSize; i++) {
-    JsonObject u = lb.add<JsonObject>(); u["name"] = lbNames[i]; u["count"] = lbCounts[i];
+    JsonObject u = lb.add<JsonObject>();
+    u["name"] = lbNames[i]; u["count"] = lbCounts[i];
+    JsonArray ud = u["daily"].to<JsonArray>();
+    for (int j = 0; j < 7; j++) ud.add(lbDailys[i][j]);
   }
 
   JsonArray ph = doc["peak_hours"].to<JsonArray>();
