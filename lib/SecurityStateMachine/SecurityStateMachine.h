@@ -2,7 +2,7 @@
 #include <Arduino.h>
 #include "states.h"
 
-// Security state machine for Agent 1.
+// Security state machine for FaceGuard.
 //
 // Combines DoorState, FaceVoter results, and Agent 2 presence into a single
 // AlertLevel that drives LedController and BuzzerController.

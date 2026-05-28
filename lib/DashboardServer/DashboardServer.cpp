@@ -14,7 +14,7 @@
 
 static const char DASHBOARD_HTML[] =
   "<!DOCTYPE html><html><head>"
-  "<meta charset='utf-8'><title>Agent 1 - %AGENT%</title>"
+  "<meta charset='utf-8'><title>FaceGuard - %AGENT%</title>"
   "<style>"
   "body{font-family:sans-serif;max-width:820px;margin:20px auto;padding:20px}"
   ".card{background:#f5f5f5;border-radius:8px;padding:16px;margin:12px 0}"
@@ -34,7 +34,7 @@ static const char DASHBOARD_HTML[] =
   "border-radius:4px;cursor:pointer;margin-right:4px}"
   "button:disabled{opacity:.5}.red{background:#dc3545}"
   "</style></head><body>"
-  "<h2>Agent 1 &mdash; %AGENT%</h2>"
+  "<h2>FaceGuard &mdash; %AGENT%</h2>"
   "<nav>"
   "<a href='/settings'>Settings</a> | "
   "<a href='/log/door'>Door Log</a> | "
@@ -143,7 +143,7 @@ static const char DASHBOARD_HTML[] =
 
 static const char SETTINGS_HTML[] =
   "<!DOCTYPE html><html><head>"
-  "<meta charset='utf-8'><title>Settings - Agent 1</title>"
+  "<meta charset='utf-8'><title>Settings - FaceGuard</title>"
   "<style>body{font-family:sans-serif;max-width:520px;margin:20px auto;padding:20px}"
   "fieldset{border:1px solid #ddd;border-radius:6px;padding:12px;margin:12px 0}"
   "legend{font-weight:bold}"
@@ -203,7 +203,7 @@ static const char SETTINGS_HTML[] =
 
 static const char PWCHANGE_HTML[] =
   "<!DOCTYPE html><html><head>"
-  "<meta charset='utf-8'><title>Set Password - Agent 1</title>"
+  "<meta charset='utf-8'><title>Set Password - FaceGuard</title>"
   "<style>body{font-family:sans-serif;max-width:400px;margin:60px auto;padding:20px}"
   "input{width:100%;padding:8px;margin:6px 0;box-sizing:border-box}"
   "button{width:100%;padding:10px;background:#0070f3;color:#fff;border:none;cursor:pointer}"
@@ -222,7 +222,7 @@ static const char PWCHANGE_HTML[] =
 
 static const char LOG_HTML[] =
   "<!DOCTYPE html><html><head>"
-  "<meta charset='utf-8'><title>%TITLE% - Agent 1</title>"
+  "<meta charset='utf-8'><title>%TITLE% - FaceGuard</title>"
   "<style>body{font-family:sans-serif;max-width:900px;margin:20px auto;padding:20px}"
   "table{width:100%;border-collapse:collapse;font-size:.9em}"
   "th,td{padding:8px;text-align:left;border-bottom:1px solid #ddd}"
@@ -315,7 +315,7 @@ static const char LOG_HTML[] =
 
 static const char ANALYTICS_HTML[] =
   "<!DOCTYPE html><html><head>"
-  "<meta charset='utf-8'><title>Analytics - Agent 1</title>"
+  "<meta charset='utf-8'><title>Analytics - FaceGuard</title>"
   "<style>body{font-family:sans-serif;max-width:900px;margin:20px auto;padding:20px}"
   ".card{background:#f5f5f5;border-radius:8px;padding:16px;margin:12px 0}"
   ".row{display:flex;gap:16px;flex-wrap:wrap}.col{flex:1;min-width:200px}"

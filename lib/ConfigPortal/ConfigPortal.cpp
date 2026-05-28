@@ -94,14 +94,14 @@ static String scanNetworksJson() {
 
 static const char PORTAL_HTML[] =
   "<!DOCTYPE html><html><head>"
-  "<meta charset='utf-8'><title>DualCam Setup</title>"
+  "<meta charset='utf-8'><title>FaceGuard Setup</title>"
   "<style>"
   "body{font-family:sans-serif;max-width:400px;margin:40px auto;padding:20px}"
   "input,select{width:100%;padding:8px;margin:6px 0;box-sizing:border-box}"
   "button{width:100%;padding:10px;margin:4px 0;background:#0070f3;color:#fff;border:none;cursor:pointer}"
   ".sb{background:#555}label{display:block;margin-top:8px;font-size:.9em;color:#444}"
   "</style></head><body>"
-  "<h2>DualCam Wi-Fi Setup</h2>"
+  "<h2>FaceGuard Wi-Fi Setup</h2>"
   "<button class='sb' type='button' onclick='doScan()'>Scan Networks</button>"
   "<select id='nets' onchange='pick(this.value)'>"
   "<option value=''>-- select network --</option></select>"
@@ -205,12 +205,12 @@ bool ConfigPortal::_tryConnect(const String& ssid, const String& pw) {
 void ConfigPortal::_runPortal(const char* apName) {
   // WIFI_AP_STA allows STA scan while AP is active
   WiFi.mode(WIFI_AP_STA);
-  if (!WiFi.softAP(apName, "dualcam99")) {
+  if (!WiFi.softAP(apName, "faceguard99")) {
     Serial.println("[ConfigPortal] ERROR: softAP() failed.");
     return;
   }
 
-  Serial.printf("[ConfigPortal] AP '%s' started. Connect and open http://%s\n",
+  Serial.printf("[ConfigPortal] AP '%s' started (pw: faceguard99). Connect and open http://%s\n",
                 apName, WiFi.softAPIP().toString().c_str());
 
   WebServer portalServer(80);

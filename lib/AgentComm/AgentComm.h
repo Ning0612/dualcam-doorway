@@ -3,7 +3,7 @@
 #include <PubSubClient.h>
 #include "states.h"
 
-// MQTT communication layer for Agent 1.
+// MQTT communication layer for FaceGuard.
 //
 // Publishes security events and subscribes to Agent 2 presence and alarm decisions.
 // Reconnects automatically every MQTT_RECONNECT_MS when disconnected.
@@ -14,8 +14,8 @@
 class AgentComm {
 public:
   // Call once after WiFi is connected.
-  // clientId: unique MQTT client identifier (e.g., "agent1").
-  static void begin(const char* broker, uint16_t port, const char* clientId = "agent1");
+  // clientId: unique MQTT client identifier (e.g., "faceguard").
+  static void begin(const char* broker, uint16_t port, const char* clientId = "faceguard");
 
   // Call every loop() iteration: runs PubSubClient::loop() and reconnect logic.
   static void tick();

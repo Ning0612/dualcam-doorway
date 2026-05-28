@@ -9,7 +9,7 @@ static const char* PW_CHGD   = "pw_changed";
 static const char* DISC_URL  = "discord_url";
 static const char* HALL_LO_KEY = "hall_lo";
 static const char* HALL_HI_KEY = "hall_hi";
-static const char* SALT      = "dualcam_s2024";
+static const char* SALT      = "faceguard_s2024";
 
 void SettingsStore::init() {
   // NVS namespace is created lazily on first write; nothing to do here.

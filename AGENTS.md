@@ -2,9 +2,9 @@
 
 ## Project Overview
 
-This repository implements **Agent 1: ESP32 Smart Doorway Security System** — a single-board embedded system on ESP32 NMK99 + OV2640 camera. The primary goal is a standalone doorway security agent with optional coordination with a separate Agent 2 (indoor presence agent) via MQTT.
+This repository implements **FaceGuard: ESP32 Smart Doorway Security System** — a single-board embedded system on ESP32 NMK99 + OV2640 camera. The primary goal is a standalone doorway security agent with optional coordination with a separate Agent 2 (indoor presence agent) via MQTT.
 
-> **Single environment**: this is a single-agent PlatformIO project. There is only one build environment (`agent1`). There are no `indoor`/`outdoor` environments.
+> **Single environment**: this is a single-agent PlatformIO project. There is only one build environment (`faceguard`). There are no `indoor`/`outdoor` environments.
 
 ---
 
@@ -14,10 +14,10 @@ This repository implements **Agent 1: ESP32 Smart Doorway Security System** — 
 
 ```powershell
 # Build
-& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run -e agent1
+& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run -e faceguard
 
 # Flash (replace COM3 with actual port)
-& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run -e agent1 -t upload --upload-port COM3
+& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run -e faceguard -t upload --upload-port COM3
 
 # Serial monitor
 & "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" device monitor --port COM3
@@ -26,10 +26,10 @@ This repository implements **Agent 1: ESP32 Smart Doorway Security System** — 
 Environment config (`platformio.ini`):
 
 ```ini
-[env:agent1]
+[env:faceguard]
 ; DISCORD_TLS_INSECURE: dev/test only — replace with DISCORD_ROOT_CA_CERT for production
 build_unflags    = -O2 -O3 -Og
-build_flags      = -I include -D AGENT1 -D DISCORD_TLS_INSECURE
+build_flags      = -I include -D FACEGUARD -D DISCORD_TLS_INSECURE
                    -D BOARD_HAS_PSRAM -mfix-esp32-psram-cache-issue -Os
 board_build.partitions = huge_app.csv
 build_src_filter = -<*> +<main.cpp>
@@ -150,7 +150,7 @@ GPIO 32 (NMK99): `CAM_PWDN` unconnected → available for WS2812B. Set `pin_pwdn
 
 ## Commit and Security Guidelines
 
-- Log format: `[Agent1] <event description>`
+- Log format: `[FaceGuard] <event description>`
 - Never commit `.pio/`, Wi-Fi passwords, tokens, or binaries
 - Webhook URL: log only the last 8 characters (`discord sent (last 8: xxxxxxxx)`)
 - Do not log full session tokens or passwords

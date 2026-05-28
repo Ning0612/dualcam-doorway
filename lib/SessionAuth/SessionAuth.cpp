@@ -12,12 +12,12 @@ String        SessionAuth::_csrfToken      = "";
 
 static const char LOGIN_HTML[] =
   "<!DOCTYPE html><html><head>"
-  "<meta charset='utf-8'><title>Login - DualCam</title>"
+  "<meta charset='utf-8'><title>Login - FaceGuard</title>"
   "<style>body{font-family:sans-serif;max-width:360px;margin:60px auto;padding:20px}"
   "input{width:100%;padding:8px;margin:6px 0;box-sizing:border-box}"
   "button{width:100%;padding:10px;background:#0070f3;color:#fff;border:none;cursor:pointer}"
   ".err{color:red;font-size:.9em}</style></head><body>"
-  "<h2>DualCam Dashboard</h2>"
+  "<h2>FaceGuard Dashboard</h2>"
   "%ERR%"
   "<form method='POST' action='/login'>"
   "<label>Password<br><input type='password' name='pw' required autofocus></label>"

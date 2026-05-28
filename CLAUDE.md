@@ -1,6 +1,8 @@
 # CLAUDE.md
 
-Agent 1：ESP32 NMK99 + OV2640 智慧門口警戒系統。可離線獨立運作；MQTT 選配 Agent 2（室內 agent）協作。
+FaceGuard：ESP32 NMK99 + OV2640 智慧門口警戒系統。可離線獨立運作；MQTT 選配 Agent 2（室內 agent）協作。
+
+> **⚠️ 從舊韌體升級注意**：此版本將密碼 salt 從 `dualcam_s2024` 改為 `faceguard_s2024`，AP 密碼從 `dualcam99` 改為 `faceguard99`。已部署且設定過 Dashboard 密碼的裝置升級後需執行 NVS 完整清除（`pio run -e faceguard -t erase` 後重燒）並重新設定所有參數。
 
 ---
 
@@ -9,12 +11,13 @@ Agent 1：ESP32 NMK99 + OV2640 智慧門口警戒系統。可離線獨立運作�
 `pio` 不在 PATH，Windows 需完整路徑：
 
 ```powershell
-& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run -e agent1
-& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run -e agent1 -t upload --upload-port COMX
+& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run -e faceguard
+& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run -e faceguard -t upload --upload-port COMX
 & "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" device monitor --port COMX
 ```
 
-唯一環境 `agent1`。**禁止使用 `board = esp32cam`。**  
+唯一環境 `faceguard`。**禁止使用 `board = esp32cam`。**
+
 `lib/` 無法自動看到 `include/` — `-I include` 旗標必須存在。
 
 ---
@@ -193,7 +196,7 @@ enum class AlertEvent  { UNKNOWN_VISITOR = 0, USER_RETURNED = 1, BOOT = 2 };
 | WiFi 持續斷線 5 min | `ESP.restart()` → Config Portal |
 | NTP 失敗 | 繼續運作；log 用相對時間；略過 SPIFFS 寫入 |
 | Camera 失敗 | face state → NO_FACE；不 crash |
-| Agent 2 離線 | ALERT_RED；Agent 1 獨立警戒 |
+| Agent 2 離線 | ALERT_RED；FaceGuard 獨立警戒 |
 | MQTT 斷線 | 背景重連；重連後重新 subscribe |
 | Discord 失敗 | 不阻塞；5 min cooldown；`notifyBoot()` 不受影響 |
 
@@ -242,13 +245,13 @@ Agent 2 離線（15 s 無 presence）→ ALERT_RED。完整 payload 格式見 `d
 ## Logging Convention
 
 ```
-[Agent1] boot
-[Agent1] WiFi connected. IP: 192.168.x.x
-[Agent1] face KNOWN_CONFIRMED: Alice (sim=0.95)
-[Agent1] face UNKNOWN_CONFIRMED
-[Agent1] door OPEN
-[Agent1] alert RED: buzzer + discord
-[Agent1] alarm_decision: CANCEL_ALARM (from Agent2)
-[Agent1] discord sent (last 8: xxxxxxxx)
-[Agent1] WARNING: Agent2 offline — default ALERT_RED
+[FaceGuard] boot
+[FaceGuard] WiFi connected. IP: 192.168.x.x
+[FaceGuard] face KNOWN_CONFIRMED: Alice (sim=0.95)
+[FaceGuard] face UNKNOWN_CONFIRMED
+[FaceGuard] door OPEN
+[FaceGuard] alert RED: buzzer + discord
+[FaceGuard] alarm_decision: CANCEL_ALARM (from Agent2)
+[FaceGuard] discord sent (last 8: xxxxxxxx)
+[FaceGuard] WARNING: Agent2 offline — default ALERT_RED
 ```

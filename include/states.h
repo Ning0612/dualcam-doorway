@@ -1,6 +1,6 @@
 #pragma once
 
-// ── Agent 1 state enums ───────────────────────────────────────────────────────
+// ── FaceGuard state enums ─────────────────────────────────────────────────────
 
 enum class DoorState { DOOR_CLOSED, DOOR_OPEN };
 

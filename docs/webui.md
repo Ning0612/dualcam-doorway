@@ -17,7 +17,7 @@
 | 方式 | URL |
 |------|-----|
 | IP 直連 | `http://<裝置IP>/` |
-| mDNS（同網段） | `http://agent1.local/` |
+| mDNS（同網段） | `http://faceguard.local/` |
 | MJPEG 串流 | `http://<裝置IP>:81/stream` |
 
 > **安全警告**：Dashboard 使用 HTTP（非 HTTPS）。僅供區域網路內使用，**切勿暴露至公網**。

@@ -12,7 +12,7 @@ static PubSubClient _mqtt(_wifiClient);
 
 static char     _broker[64]   = {};
 static uint16_t _port         = MQTT_DEFAULT_PORT;
-static char     _clientId[24] = "agent1";
+static char     _clientId[24] = "faceguard";
 static bool     _configured   = false;
 
 static unsigned long _lastReconnectMs = 0;
@@ -70,16 +70,16 @@ void AgentComm::_reconnect() {
   if (millis() - _lastReconnectMs < MQTT_RECONNECT_MS) return;
   _lastReconnectMs = millis();
 
-  Serial.printf("[Agent1] MQTT connecting to %s:%u...\n", _broker, _port);
+  Serial.printf("[FaceGuard] MQTT connecting to %s:%u...\n", _broker, _port);
   if (_mqtt.connect(_clientId)) {
-    Serial.println("[Agent1] MQTT connected");
+    Serial.println("[FaceGuard] MQTT connected");
     _mqtt.subscribe(MQTT_TOPIC_PRESENCE);
     _mqtt.subscribe(MQTT_TOPIC_ALARM);
     _brokerConnected = true;
     // Agent 2 online state is determined by presence heartbeats, not broker connect.
     // _onConnChange is NOT fired here; wait for the first presence message.
   } else {
-    Serial.printf("[Agent1] MQTT connect failed (rc=%d)\n", _mqtt.state());
+    Serial.printf("[FaceGuard] MQTT connect failed (rc=%d)\n", _mqtt.state());
   }
 }
 
@@ -94,7 +94,7 @@ bool AgentComm::_publish(const char* topic, const String& payload) {
 
 void AgentComm::begin(const char* broker, uint16_t port, const char* clientId) {
   if (!broker || strlen(broker) == 0) {
-    Serial.println("[Agent1] MQTT broker not configured — AgentComm disabled");
+    Serial.println("[FaceGuard] MQTT broker not configured — AgentComm disabled");
     return;
   }
   strncpy(_broker, broker, sizeof(_broker) - 1);
@@ -118,13 +118,13 @@ void AgentComm::tick() {
     if (_agent2Online && _lastPresenceMs != 0 &&
         (millis() - _lastPresenceMs) >= AGENT2_OFFLINE_TIMEOUT_MS) {
       _agent2Online = false;
-      Serial.println("[Agent1] WARNING: Agent 2 presence timeout — marking offline");
+      Serial.println("[FaceGuard] WARNING: Agent 2 presence timeout — marking offline");
       if (_onConnChange) _onConnChange(false);
     }
   } else {
     if (_brokerConnected) {
       _brokerConnected = false;
-      Serial.println("[Agent1] MQTT disconnected");
+      Serial.println("[FaceGuard] MQTT disconnected");
       // Broker disconnect means Agent 2 is unreachable
       if (_agent2Online) {
         _agent2Online = false;

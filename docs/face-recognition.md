@@ -271,7 +271,7 @@ bestSim ≥ FACE_SIMILARITY_THRESHOLD（0.90）且 margin 足夠 → FACE_KNOWN
 ```bash
 # 需要先取得 CSRF token（從 /dashboard 頁面取得）
 curl -b "sid=<session-token>" \
-     -X POST http://agent1.local/api/face/enroll \
+     -X POST http://faceguard.local/api/face/enroll \
      -H "Content-Type: application/x-www-form-urlencoded" \
      -d "csrf=<token>&name=Alice"
 ```

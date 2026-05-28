@@ -44,8 +44,8 @@ pip install platformio
 ## Clone 專案
 
 ```bash
-git clone <repository-url> dualcam-doorway
-cd dualcam-doorway
+git clone <repository-url> faceguard
+cd faceguard
 ```
 
 ---
@@ -55,20 +55,20 @@ cd dualcam-doorway
 ### Windows（PowerShell）
 
 ```powershell
-& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run -e agent1
+& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run -e faceguard
 ```
 
 ### macOS / Linux
 
 ```bash
-~/.platformio/penv/bin/pio run -e agent1
+~/.platformio/penv/bin/pio run -e faceguard
 ```
 
 > **重要**：`pio` 通常不在 PATH。務必使用完整路徑。
 
 建置成功後，輸出檔案位於：
-- `.pio/build/agent1/firmware.bin`
-- `.pio/build/agent1/firmware.elf`
+- `.pio/build/faceguard/firmware.bin`
+- `.pio/build/faceguard/firmware.elf`
 
 ### 依賴套件
 
@@ -104,10 +104,10 @@ ls /dev/ttyUSB*
 
 ```powershell
 # Windows
-& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run -e agent1 -t upload --upload-port COM3
+& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run -e faceguard -t upload --upload-port COM3
 
 # 若不指定埠號，PlatformIO 會自動偵測
-& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run -e agent1 -t upload
+& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run -e faceguard -t upload
 ```
 
 ### 燒錄失敗排除
@@ -129,18 +129,18 @@ ls /dev/ttyUSB*
 ### 開機日誌範例
 
 ```
-[Agent1] boot
-[Agent1] WARNING: Dashboard HTTP only — LAN use only, not internet-safe.
-[Agent1] WiFi connected. IP: 192.168.1.100  MAC: AA:BB:CC:DD:EE:FF
-[Agent1] mDNS: agent1.local
-[Agent1] NTP sync OK
-[Agent1] Hall bounds: lo=1000 hi=3000
-[Agent1] HTTP server on port 80
-[Agent1] ready
-[Agent1]   h=Hall value  H=auto-calibrate bounds  d=door toggle
-[Agent1]   u=unknown     e=enroll face     r=clear faces
-[Agent1]   n=face count  c=camera status   s=full status
-[Agent1]   W=clear WiFi credentials
+[FaceGuard] boot
+[FaceGuard] WARNING: Dashboard HTTP only — LAN use only, not internet-safe.
+[FaceGuard] WiFi connected. IP: 192.168.1.100  MAC: AA:BB:CC:DD:EE:FF
+[FaceGuard] mDNS: faceguard.local
+[FaceGuard] NTP sync OK
+[FaceGuard] Hall bounds: lo=1000 hi=3000
+[FaceGuard] HTTP server on port 80
+[FaceGuard] ready
+[FaceGuard]   h=Hall value  H=auto-calibrate bounds  d=door toggle
+[FaceGuard]   u=unknown     e=enroll face     r=clear faces
+[FaceGuard]   n=face count  c=camera status   s=full status
+[FaceGuard]   W=clear WiFi credentials
 ```
 
 ---
@@ -168,17 +168,17 @@ ls /dev/ttyUSB*
 
 ### Build Flags
 
-`platformio.ini` 的 `[env:agent1]` 區段：
+`platformio.ini` 的 `[env:faceguard]` 區段：
 
 ```ini
-build_flags = -I include -D AGENT1 -D DISCORD_TLS_INSECURE
+build_flags = -I include -D FACEGUARD -D DISCORD_TLS_INSECURE
               -D BOARD_HAS_PSRAM -mfix-esp32-psram-cache-issue
 ```
 
 | 旗標 | 說明 |
 |------|------|
 | `-I include` | 讓 `lib/` 下的模組可 include `config.h`、`states.h` 等 |
-| `-D AGENT1` | 條件編譯標記（保留未來 Agent 2 共用程式碼用） |
+| `-D FACEGUARD` | 條件編譯標記（保留未來 Agent 2 共用程式碼用） |
 | `-D DISCORD_TLS_INSECURE` | 跳過 TLS 憑證驗證（開發用，**生產環境必須移除**） |
 | `-D BOARD_HAS_PSRAM` | 啟用 PSRAM（YUV422 camera frame 需要） |
 | `-mfix-esp32-psram-cache-issue` | 修復 AI Thinker 系列 PSRAM cache 問題 |
@@ -189,7 +189,7 @@ build_flags = -I include -D AGENT1 -D DISCORD_TLS_INSECURE
 
 ```ini
 ; 生產環境 build_flags
-build_flags = -I include -D AGENT1
+build_flags = -I include -D FACEGUARD
               -D BOARD_HAS_PSRAM -mfix-esp32-psram-cache-issue
               -D DISCORD_ROOT_CA_CERT='"-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----\n"'
 ```
@@ -225,7 +225,7 @@ build_flags = -I include -D AGENT1
 
 ### Q: MQTT 未連線
 
-**A:** 確認 `mqtt_broker` NVS 已設定（透過 WebUI `/settings`），Broker IP 可從 Agent 1 所在網路存取，port 1883 已開放。
+**A:** 確認 `mqtt_broker` NVS 已設定（透過 WebUI `/settings`），Broker IP 可從 FaceGuard 所在網路存取，port 1883 已開放。
 
 ### Q: 編譯出現 `DISCORD_ROOT_CA_CERT` 或 `DISCORD_TLS_INSECURE` 錯誤
 

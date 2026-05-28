@@ -18,7 +18,7 @@
 
 1. **單一主迴圈**：`loop()` 統一驅動所有模組的 `tick()`，避免複雜的 task 同步問題
 2. **Callback 解耦**：模組間透過函式指標 callback 通訊，不直接相互引用
-3. **離線優先**：Agent 2 離線時 Agent 1 完整獨立運作（ALERT_RED 模式）
+3. **離線優先**：Agent 2 離線時 FaceGuard 完整獨立運作（ALERT_RED 模式）
 4. **投票防誤觸**：所有人臉辨識結果必須通過 FaceVoter 時間窗投票才能觸發事件
 5. **非阻塞設計**：Discord 通知、Camera 初始化、MJPEG stream 皆以 FreeRTOS task 執行
 
@@ -104,7 +104,7 @@ loop() 每次迭代：
 
 - 開機時讀取 NVS `wifi_ssid` / `wifi_pw`
 - 若存在：`WiFi.begin()` 嘗試連線（超時 15s）
-- 若失敗或不存在：進入 AP 模式 `Agent1-Setup`，密碼 `dualcam99`
+- 若失敗或不存在：進入 AP 模式 `FaceGuard-Setup`，密碼 `faceguard99`
 - 提供 HTML 設定頁面（含 WiFi Scan）
 - 接收 POST `/save` → 寫入 NVS → `ESP.restart()`
 - 5 分鐘無操作 → `ESP.restart()`

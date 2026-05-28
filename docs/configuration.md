@@ -39,8 +39,8 @@
 
 ### 連線步驟
 
-1. 裝置開啟 WiFi AP：SSID = `Agent1-Setup`，密碼 = `dualcam99`
-2. 以手機/電腦連線至 `Agent1-Setup`
+1. 裝置開啟 WiFi AP：SSID = `FaceGuard-Setup`，密碼 = `faceguard99`
+2. 以手機/電腦連線至 `FaceGuard-Setup`
 3. 瀏覽器訪問 `http://192.168.4.1`
 4. 頁面顯示 WiFi Scan 結果，選擇 SSID 或手動輸入
 5. 輸入 WiFi 密碼，點擊「儲存」→ 裝置重啟並連線至指定 WiFi
@@ -242,8 +242,8 @@ NVS 資料目前無自動備份機制。若需保留設定（例如韌體更新�
 
 ```
 Serial 輸入: W
-→ [Agent1] Clearing WiFi credentials and restarting...
-→ 裝置重啟進入 AP 模式 "Agent1-Setup"
+→ [FaceGuard] Clearing WiFi credentials and restarting...
+→ 裝置重啟進入 AP 模式 "FaceGuard-Setup"
 ```
 
 ### 清除所有人臉資料
@@ -261,10 +261,10 @@ POST /api/face/clear
 
 ```powershell
 # 使用 PlatformIO CLI Erase Flash
-& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run -e agent1 -t erase
+& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run -e faceguard -t erase
 
 # 重新燒錄
-& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run -e agent1 -t upload
+& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run -e faceguard -t upload
 ```
 
 > **注意**：`Erase Flash` 會清除所有 NVS 資料，包含 WiFi 憑證、人臉資料、所有設定。

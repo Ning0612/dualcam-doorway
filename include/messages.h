@@ -1,12 +1,12 @@
 #pragma once
 
-// ── MQTT topics (Agent 1 publish) ────────────────────────────────────────────
+// ── MQTT topics (FaceGuard publish) ──────────────────────────────────────────
 #define MQTT_TOPIC_DOOR     "home/security/door"
 #define MQTT_TOPIC_FACE     "home/security/face"
 #define MQTT_TOPIC_ALERT    "home/security/alert"
 #define MQTT_TOPIC_STATUS   "home/security/status"
 
-// ── MQTT topics (Agent 1 subscribe) ─────────────────────────────────────────
+// ── MQTT topics (FaceGuard subscribe) ────────────────────────────────────────
 #define MQTT_TOPIC_PRESENCE "home/home_state/presence"
 #define MQTT_TOPIC_ALARM    "home/home_state/alarm_decision"
 

@@ -1,6 +1,6 @@
-# DualCam Doorway — Agent 1：智慧門口警戒保全系統
+# FaceGuard：ESP32 智慧門口警戒保全系統
 
-ESP32 NMK99 + OV2640 Camera 實現的可獨立運作門口監控 Agent。整合人臉辨識、霍爾感應器門禁、RGB LED 警戒狀態、蜂鳴器警示、Discord Webhook 通知，以及本機 WebUI 管理介面。
+ESP32 NMK99 + OV2640 Camera 實現的可獨立運作門口監控系統。整合人臉辨識、霍爾感應器門禁、RGB LED 警戒狀態、蜂鳴器警示、Discord Webhook 通知，以及本機 WebUI 管理介面。
 
 ## 功能概覽
 
@@ -30,10 +30,10 @@ ESP32 NMK99 + OV2640 Camera 實現的可獨立運作門口監控 Agent。整合�
 
 ```powershell
 # 編譯
-& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run -e agent1
+& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run -e faceguard
 
 # 燒錄（替換 COM3 為實際埠號）
-& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run -e agent1 -t upload --upload-port COM3
+& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run -e faceguard -t upload --upload-port COM3
 
 # 開啟串列監視器
 & "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" device monitor --port COM3
@@ -41,11 +41,11 @@ ESP32 NMK99 + OV2640 Camera 實現的可獨立運作門口監控 Agent。整合�
 
 ### 3. 首次設定
 
-1. 首次開機（或無 WiFi 憑證）→ 裝置開啟 AP 熱點 `Agent1-Setup`（密碼：`dualcam99`）
+1. 首次開機（或無 WiFi 憑證）→ 裝置開啟 AP 熱點 `FaceGuard-Setup`（密碼：`faceguard99`）
 2. 以手機或電腦連線，瀏覽 `http://192.168.4.1`
 3. 選擇 WiFi SSID，輸入密碼，按「儲存」
 4. 裝置重啟後連上 WiFi，Serial 印出 IP
-5. 瀏覽 `http://<裝置IP>/` 或 `http://agent1.local/`
+5. 瀏覽 `http://<裝置IP>/` 或 `http://faceguard.local/`
 6. 預設帳號 `admin`，首次登入需設定密碼
 
 ## 文件索引
@@ -64,7 +64,7 @@ ESP32 NMK99 + OV2640 Camera 實現的可獨立運作門口監控 Agent。整合�
 ## 專案結構
 
 ```
-dualcam-doorway/
+faceguard/
 ├── src/
 │   └── main.cpp              # 主程式（Arduino loop/setup + 所有 callbacks）
 ├── lib/

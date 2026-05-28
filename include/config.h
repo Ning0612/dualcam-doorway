@@ -1,7 +1,7 @@
 #pragma once
 
 // mDNS hostnames — devices get IPs via DHCP, peer discovery via .local names
-#define MDNS_AGENT1        "agent1"    // this device: agent1.local
+#define MDNS_FACEGUARD     "faceguard" // this device: faceguard.local
 
 // HTTP
 #define HTTP_PORT          80

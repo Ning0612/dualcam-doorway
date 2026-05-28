@@ -1,5 +1,12 @@
 # 部署說明
 
+> **⚠️ 從舊韌體（DualCam/agent1）升級的破壞性變更**：
+> - Dashboard 密碼 salt 已變更（`dualcam_s2024` → `faceguard_s2024`），已設定過密碼的裝置升級後將**無法登入** WebUI
+> - Config Portal AP 密碼已變更：`dualcam99` → `faceguard99`
+> - MQTT client ID 已變更：`agent1` → `faceguard`（若 Broker ACL 有限制請更新）
+>
+> **恢復方式**：執行完整 NVS 清除後重燒 → `pio run -e faceguard -t erase` → 重新設定所有項目
+
 ## 目錄
 
 - [部署前準備](#部署前準備)
@@ -48,7 +55,7 @@ build_flags = ... -D DISCORD_TLS_INSECURE
 3. 在 `platformio.ini` 定義：
 
 ```ini
-build_flags = -I include -D AGENT1
+build_flags = -I include -D FACEGUARD
               -D BOARD_HAS_PSRAM -mfix-esp32-psram-cache-issue
               -D DISCORD_ROOT_CA_CERT='"-----BEGIN CERTIFICATE-----\nMIIB...\n-----END CERTIFICATE-----\n"'
 ```
@@ -88,7 +95,7 @@ allow_anonymous true
 ### Step 1：編譯
 
 ```powershell
-& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run -e agent1
+& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run -e faceguard
 ```
 
 確認輸出結尾：
@@ -101,7 +108,7 @@ Flash: [...]
 ### Step 2：燒錄韌體
 
 ```powershell
-& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run -e agent1 -t upload --upload-port COM3
+& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run -e faceguard -t upload --upload-port COM3
 ```
 
 > 若板子不自動進入燒錄模式，手動按住 BOOT 鍵同時按 RST 鍵。
@@ -109,7 +116,7 @@ Flash: [...]
 ### Step 3：首次設定（Config Portal）
 
 1. 開啟串列監視器，確認開機日誌
-2. 連線至 AP `Agent1-Setup`（密碼：`dualcam99`）
+2. 連線至 AP `FaceGuard-Setup`（密碼：`faceguard99`）
 3. 瀏覽 `http://192.168.4.1`，設定 WiFi SSID 與密碼（Config Portal 只負責 WiFi）
 4. 儲存 → 裝置重啟連線 WiFi；Discord URL 等其他設定待 WiFi 連線後透過 WebUI `/settings` 設定
 
@@ -117,14 +124,14 @@ Flash: [...]
 
 Serial 輸出：
 ```
-[Agent1] WiFi connected. IP: 192.168.x.x  MAC: xx:xx:xx:xx:xx:xx
-[Agent1] mDNS: agent1.local
-[Agent1] NTP sync OK
+[FaceGuard] WiFi connected. IP: 192.168.x.x  MAC: xx:xx:xx:xx:xx:xx
+[FaceGuard] mDNS: faceguard.local
+[FaceGuard] NTP sync OK
 ```
 
 ### Step 5：首次登入 Dashboard
 
-1. 瀏覽 `http://agent1.local/` 或 `http://<IP>/`
+1. 瀏覽 `http://faceguard.local/` 或 `http://<IP>/`
 2. 輸入帳號 `admin`
 3. 首次登入後強制設定新密碼（8–64 字元）
 
@@ -136,7 +143,7 @@ Serial 輸出：
 
 Serial 確認：
 ```
-[Agent1] Agent2 MQTT connected
+[FaceGuard] Agent2 MQTT connected
 ```
 
 ### Step 7：霍爾感應器校準
@@ -172,8 +179,8 @@ Serial 確認：
 ```
 路由器（192.168.1.1）
   │
-  ├── ESP32 Agent 1 (192.168.1.100 或 DHCP 分配)
-  │     mDNS: agent1.local
+  ├── ESP32 FaceGuard (192.168.1.100 或 DHCP 分配)
+  │     mDNS: faceguard.local
   │     HTTP: port 80
   │     MJPEG: port 81
   │
@@ -190,14 +197,14 @@ Serial 確認：
 
 ESP32 MAC 位址可從 Serial 開機日誌取得：
 ```
-[Agent1] WiFi connected. IP: 192.168.1.100  MAC: AA:BB:CC:DD:EE:FF
+[FaceGuard] WiFi connected. IP: 192.168.1.100  MAC: AA:BB:CC:DD:EE:FF
 ```
 
 ### mDNS
 
-同網段的裝置可透過 `agent1.local` 存取（無需知道 IP）：
-- `http://agent1.local/`：Dashboard
-- `http://agent1.local:81/stream`：MJPEG 串流
+同網段的裝置可透過 `faceguard.local` 存取（無需知道 IP）：
+- `http://faceguard.local/`：Dashboard
+- `http://faceguard.local:81/stream`：MJPEG 串流
 
 > mDNS 在某些 Android 設備或路由器設定下可能不可用，此時需使用 IP 直連。
 
@@ -264,7 +271,7 @@ ESP32 MAC 位址可從 Serial 開機日誌取得：
 5. 監視 Serial 確認正常開機
 6. 驗證功能（Dashboard、人臉辨識、MQTT）
 
-> 若需清除 NVS（設定不相容），在 Step 3 執行 `pio run -e agent1 -t erase`，燒錄後重新設定所有項目。
+> 若需清除 NVS（設定不相容），在 Step 3 執行 `pio run -e faceguard -t erase`，燒錄後重新設定所有項目。
 
 ---
 
@@ -279,7 +286,7 @@ ESP32 MAC 位址可從 Serial 開機日誌取得：
 ### Camera 初始化失敗
 
 ```
-[Agent1] WARNING: camera init failed — face detection unavailable
+[FaceGuard] WARNING: camera init failed — face detection unavailable
 ```
 
 1. 確認 Camera 排線接緊
@@ -295,7 +302,7 @@ ESP32 MAC 位址可從 Serial 開機日誌取得：
 
 ### MQTT 無法連線
 
-1. 確認 Broker IP 可從 Agent 1 網段 ping 到
+1. 確認 Broker IP 可從 FaceGuard 網段 ping 到
 2. 確認 Broker 服務運行：`mosquitto_sub -h <ip> -t test`
 3. 確認 port 1883 未被防火牆封鎖
 4. 若 Broker 需認證，目前版本不支援（需修改 `AgentComm::_reconnect()`）
@@ -304,7 +311,7 @@ ESP32 MAC 位址可從 Serial 開機日誌取得：
 
 1. 確認 Webhook URL 格式正確（`https://discord.com/api/webhooks/...`）
 2. 確認 ESP32 可存取 internet（非 isolated LAN）
-3. 查看 Serial 日誌：`[Agent1] discord sent (last 8: xxxxxxxx)` 或錯誤訊息
+3. 查看 Serial 日誌：`[FaceGuard] discord sent (last 8: xxxxxxxx)` 或錯誤訊息
 4. 確認 rate limit（同事件 30 秒內只送一次）
 5. 確認非 5 分鐘 cooldown 期間（連線失敗後）
 6. **生產環境**：確認 TLS 設定正確（非 INSECURE 模式下需 CA 憑證）
@@ -327,7 +334,7 @@ ESP32 MAC 位址可從 Serial 開機日誌取得：
 
 ## 錯誤處理行為參考
 
-| 錯誤情況 | Agent 1 行為 | 恢復方式 |
+| 錯誤情況 | FaceGuard 行為 | 恢復方式 |
 |---------|-------------|---------|
 | WiFi 斷線 | 持續警戒，MQTT 暫停，重連中 | WiFi 恢復後自動重連 |
 | WiFi 斷線 > 5 分鐘 | 自動重啟進 Config Portal | 重新連線 WiFi |

@@ -1,6 +1,6 @@
 #pragma once
 
-// Agent 1 pin assignments (NMK99 ESP32-CAM / AI Thinker compatible)
+// FaceGuard pin assignments (NMK99 ESP32-CAM / AI Thinker compatible)
 //
 // Camera occupies: 0(XCLK), 5(D0), 18(D1), 19(D2), 21(D3), 22(PCLK),
 //                  23(HREF), 25(VSYNC), 26(SIOD/SDA), 27(SIOC/SCL),

@@ -5,8 +5,8 @@
 - [架構概覽](#架構概覽)
 - [Broker 設定](#broker-設定)
 - [連線規格](#連線規格)
-- [Publish Topics（Agent 1 → Agent 2）](#publish-topicsagent-1--agent-2)
-- [Subscribe Topics（Agent 2 → Agent 1）](#subscribe-topicsagent-2--agent-1)
+- [Publish Topics（FaceGuard → Agent 2）](#publish-topicsfaceguard--agent-2)
+- [Subscribe Topics（Agent 2 → FaceGuard）](#subscribe-topicsagent-2--faceguard)
 - [訊息格式詳述](#訊息格式詳述)
 - [離線行為](#離線行為)
 - [Agent 2 通訊整合指南](#agent-2-通訊整合指南)
@@ -16,7 +16,7 @@
 ## 架構概覽
 
 ```
-Agent 1 (ESP32 NMK99)           MQTT Broker              Agent 2 (室內 Agent)
+FaceGuard (ESP32 NMK99)           MQTT Broker              Agent 2 (室內 Agent)
     │                               │                           │
     │── home/security/door ─────────►──────────────────────────►│
     │── home/security/face ─────────►──────────────────────────►│
@@ -38,7 +38,7 @@ MQTT Broker 資訊儲存於 NVS，透過 WebUI `/settings` 設定：
 | Broker IP/hostname | `mqtt_broker` | 空（未設定） |
 | Port | `mqtt_port` | 1883 |
 
-若 Broker 未設定（空字串），`AgentComm::begin()` 為 no-op，Agent 1 以 ALERT_RED 獨立運作。
+若 Broker 未設定（空字串），`AgentComm::begin()` 為 no-op，FaceGuard 以 ALERT_RED 獨立運作。
 
 ---
 
@@ -46,7 +46,7 @@ MQTT Broker 資訊儲存於 NVS，透過 WebUI `/settings` 設定：
 
 | 項目 | 值 |
 |------|-----|
-| Client ID | `agent1` |
+| Client ID | `faceguard` |
 | QoS | 0 |
 | Keep-alive | 60 秒 |
 | 重連間隔 | 5 秒（`MQTT_RECONNECT_MS`） |
@@ -54,7 +54,7 @@ MQTT Broker 資訊儲存於 NVS，透過 WebUI `/settings` 設定：
 
 ---
 
-## Publish Topics（Agent 1 → Agent 2）
+## Publish Topics（FaceGuard → Agent 2）
 
 ### `home/security/door`
 
@@ -111,7 +111,7 @@ FaceVoter 輸出 `UNKNOWN_CONFIRMED` 時，或 RED alert 確認觸發時發布�
 | `timestamp` | Integer | `millis()` 值 |
 
 **Yellow Alert 流程**：
-- Agent 1 發布此訊息，等待 Agent 2 回應 `home/home_state/alarm_decision`
+- FaceGuard 發布此訊息，等待 Agent 2 回應 `home/home_state/alarm_decision`
 - 若 30 秒內無回應，自動升為 RED alert（`_triggerAlarm()`）
 
 ### `home/security/status`
@@ -136,7 +136,7 @@ FaceVoter 輸出 `UNKNOWN_CONFIRMED` 時，或 RED alert 確認觸發時發布�
 
 ---
 
-## Subscribe Topics（Agent 2 → Agent 1）
+## Subscribe Topics（Agent 2 → FaceGuard）
 
 ### `home/home_state/presence`
 
@@ -178,7 +178,7 @@ Agent 2 回應警報決定（在 YELLOW alert 等待期間）。
 | 欄位 | 型別 | 說明 |
 |------|------|------|
 | `alarm_decision` | String | `"TRIGGER_ALARM"` / `"CANCEL_ALARM"` / `"NO_ACTION"` |
-| `source` | String | 決定來源（由 Agent 2 定義，Agent 1 僅記錄） |
+| `source` | String | 決定來源（由 Agent 2 定義，FaceGuard 僅記錄） |
 | `timestamp` | String | ISO 8601 |
 
 **處理邏輯**：
@@ -203,7 +203,7 @@ Agent 2 回應警報決定（在 YELLOW alert 等待期間）。
 "timestamp": 1800000
 ```
 
-ISO 8601 timestamp 僅用於 LogManager 日誌（透過 WebUI 查詢），不出現在 MQTT payload 中。NTP 未同步時，日誌以 `{"time_synced": false}` 標記。Agent 2 傳來的 presence / alarm_decision 訊息格式由 Agent 2 自行決定；Agent 1 只解析 `presence_state`、`presence_score`、`alarm_decision` 欄位，其餘欄位（包含 Agent 2 的 timestamp 格式）不影響解析。
+ISO 8601 timestamp 僅用於 LogManager 日誌（透過 WebUI 查詢），不出現在 MQTT payload 中。NTP 未同步時，日誌以 `{"time_synced": false}` 標記。Agent 2 傳來的 presence / alarm_decision 訊息格式由 Agent 2 自行決定；FaceGuard 只解析 `presence_state`、`presence_score`、`alarm_decision` 欄位，其餘欄位（包含 Agent 2 的 timestamp 格式）不影響解析。
 
 ### 主題常數（`messages.h`）
 
@@ -234,9 +234,9 @@ AgentComm::setOnConnectionChange(onAgent2Connection)
   → LedController::setLevel(ALERT_RED)
 ```
 
-### Agent 1 獨立運作模式
+### FaceGuard 獨立運作模式
 
-Agent 2 離線時，Agent 1 以 `ALERT_RED` 獨立警戒：
+Agent 2 離線時，FaceGuard 以 `ALERT_RED` 獨立警戒：
 - 偵測到 UNKNOWN_CONFIRMED → 立即觸發蜂鳴器 + LED 閃爍 + Discord
 - 不等待任何 AlarmDecision
 - MQTT 背景持續重連，Agent 2 上線後恢復協作模式
@@ -248,7 +248,7 @@ AgentComm::tick():
   if (!_client.connected()):
       if (now - _lastReconnectMs >= MQTT_RECONNECT_MS):
           _reconnect()
-              → _client.connect("agent1")
+              → _client.connect("faceguard")
               → 成功: subscribe presence & alarm topics
               → 失敗: 5s 後重試
 ```
@@ -263,7 +263,7 @@ AgentComm::tick():
 
 ```
 主題: home/home_state/presence
-頻率: 建議每 5–30 秒一次（Agent 1 逾時 15s 後判定離線）
+頻率: 建議每 5–30 秒一次（FaceGuard 逾時 15s 後判定離線）
 格式:
 {
   "presence_state": "OCCUPIED" | "UNOCCUPIED",
@@ -301,7 +301,7 @@ home/security/status  — 接收心跳狀態
 mosquitto_pub -h <broker-ip> -t home/home_state/presence \
   -m '{"presence_state":"OCCUPIED","presence_score":3,"timestamp":"2025-12-20T18:30:05+08:00"}'
 
-# 監聽 Agent 1 發布的所有事件
+# 監聽 FaceGuard 發布的所有事件
 mosquitto_sub -h <broker-ip> -t "home/security/#" -v
 
 # 模擬 Agent 2 取消警報

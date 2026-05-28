@@ -40,7 +40,7 @@ static constexpr unsigned long STATUS_PUB_INTERVAL_MS = 30000UL;
 
 static void syncNtp() {
   configTime(8 * 3600, 0, "pool.ntp.org", "time.cloudflare.com");
-  Serial.print("[Agent1] NTP sync");
+  Serial.print("[FaceGuard] NTP sync");
   for (int i = 0; i < 20; i++) {
     if (time(nullptr) > 1700000000UL) { Serial.println(" OK"); return; }
     delay(500);
@@ -55,13 +55,13 @@ static void handleWifiLoss() {
   if (WiFi.status() != WL_CONNECTED) {
     if (wifiLostMs == 0) {
       wifiLostMs = millis();
-      Serial.println("[Agent1] WiFi disconnected, monitoring for recovery.");
+      Serial.println("[FaceGuard] WiFi disconnected, monitoring for recovery.");
     } else if (millis() - wifiLostMs >= WIFI_LOST_TIMEOUT_MS) {
-      Serial.println("[Agent1] WiFi lost too long — restarting to config portal.");
+      Serial.println("[FaceGuard] WiFi lost too long — restarting to config portal.");
       ESP.restart();
     }
   } else {
-    if (wifiLostMs != 0) Serial.println("[Agent1] WiFi reconnected.");
+    if (wifiLostMs != 0) Serial.println("[FaceGuard] WiFi reconnected.");
     wifiLostMs = 0;
   }
 }
@@ -69,7 +69,7 @@ static void handleWifiLoss() {
 // ── SecurityStateMachine callbacks ───────────────────────────────────────────
 
 static void onAlert(AlertLevel level, const char* eventType) {
-  Serial.printf("[Agent1] alert %s: %s\n", alertLevelToString(level), eventType);
+  Serial.printf("[FaceGuard] alert %s: %s\n", alertLevelToString(level), eventType);
 
   if (level == AlertLevel::ALERT_RED) {
     BuzzerController::trigger();
@@ -79,7 +79,7 @@ static void onAlert(AlertLevel level, const char* eventType) {
 
     String url = SettingsStore::getDiscordUrl();
     if (url.length() > 0) {
-      String msg = String("[Agent1] Unknown visitor detected! Alert: ") + alertLevelToString(level);
+      String msg = String("[FaceGuard] Unknown visitor detected! Alert: ") + alertLevelToString(level);
 
       uint8_t* jpegBuf = nullptr;
       size_t   jpegLen = 0;
@@ -108,7 +108,7 @@ static void onAlert(AlertLevel level, const char* eventType) {
 }
 
 static void onDoorEvent(DoorState state, const char* relatedUser) {
-  Serial.printf("[Agent1] door %s (user: %s)\n",
+  Serial.printf("[FaceGuard] door %s (user: %s)\n",
                 doorStateToString(state), relatedUser[0] ? relatedUser : "none");
   logManager.logDoor(state, relatedUser[0] ? relatedUser : nullptr);
   AgentComm::publishDoor(state, relatedUser[0] ? relatedUser : nullptr);
@@ -117,14 +117,14 @@ static void onDoorEvent(DoorState state, const char* relatedUser) {
     // Known user returned home
     String url = SettingsStore::getDiscordUrl();
     if (url.length() > 0) {
-      String msg = String("[Agent1] ") + relatedUser + " 回家";
+      String msg = String("[FaceGuard] ") + relatedUser + " 回家";
       DiscordNotifier::notify(url, AlertEvent::USER_RETURNED, msg);
     }
   }
 }
 
 static void onKnownConfirmed(const char* name, float similarity) {
-  Serial.printf("[Agent1] face KNOWN_CONFIRMED: %s (sim=%.3f)\n", name, similarity);
+  Serial.printf("[FaceGuard] face KNOWN_CONFIRMED: %s (sim=%.3f)\n", name, similarity);
   logManager.logFace(FaceState::FACE_KNOWN, VoteResult::KNOWN_CONFIRMED, name, similarity);
   AgentComm::publishFace(name, similarity);
 
@@ -133,11 +133,11 @@ static void onKnownConfirmed(const char* name, float similarity) {
 
 static void onBuzzerSilence() {
   BuzzerController::cancel();
-  Serial.println("[Agent1] buzzer silenced");
+  Serial.println("[FaceGuard] buzzer silenced");
 }
 
 static void onAlarmCancelled() {
-  Serial.println("[Agent1] alarm cancelled");
+  Serial.println("[FaceGuard] alarm cancelled");
   BuzzerController::cancel();   // safety: ensure off even if already auto-silenced
   // LED is handled by updateLed() in loop().
 }
@@ -145,7 +145,7 @@ static void onAlarmCancelled() {
 // ── AgentComm callbacks ───────────────────────────────────────────────────────
 
 static void onPresence(bool occupied, int score) {
-  Serial.printf("[Agent1] presence: %s (score=%d)\n",
+  Serial.printf("[FaceGuard] presence: %s (score=%d)\n",
                 occupied ? "OCCUPIED" : "UNOCCUPIED", score);
   sm.onPresence(occupied);
   // LED is handled by updateLed() in loop().
@@ -154,7 +154,7 @@ static void onPresence(bool occupied, int score) {
 static void onAlarmDecision(AlarmDecision decision) {
   const char* dstr = (decision == AlarmDecision::TRIGGER_ALARM) ? "TRIGGER_ALARM" :
                      (decision == AlarmDecision::CANCEL_ALARM)  ? "CANCEL_ALARM"  : "NO_ACTION";
-  Serial.printf("[Agent1] alarm_decision: %s (from Agent2)\n", dstr);
+  Serial.printf("[FaceGuard] alarm_decision: %s (from Agent2)\n", dstr);
 
   // Delegate to state machine. TRIGGER_ALARM is guarded by _waitingForDecision so
   // replayed messages have no effect. CANCEL_ALARM is accepted while _alarmActive;
@@ -164,7 +164,7 @@ static void onAlarmDecision(AlarmDecision decision) {
 }
 
 static void onAgent2Connection(bool connected) {
-  Serial.printf("[Agent1] Agent2 MQTT %s\n", connected ? "connected" : "disconnected");
+  Serial.printf("[FaceGuard] Agent2 MQTT %s\n", connected ? "connected" : "disconnected");
   sm.onAgent2Online(connected);
   // LED is handled by updateLed() in loop().
 }
@@ -226,7 +226,7 @@ static void updateLed() {
 // ── DoorSensor callback ───────────────────────────────────────────────────────
 
 static void onDoorChange(DoorState state) {
-  Serial.printf("[Agent1] door %s\n", doorStateToString(state));
+  Serial.printf("[FaceGuard] door %s\n", doorStateToString(state));
   sm.onDoorChange(state);
 }
 
@@ -238,7 +238,7 @@ static void handleSerialInput() {
 
   switch (c) {
     case 'h':
-      Serial.printf("[Agent1] Hall raw=%u  lo=%u  hi=%u  hyst=±%d  door=%s\n",
+      Serial.printf("[FaceGuard] Hall raw=%u  lo=%u  hi=%u  hyst=±%d  door=%s\n",
                     DoorSensor::getRaw(),
                     SettingsStore::getHallLowerBound(),
                     SettingsStore::getHallUpperBound(),
@@ -250,7 +250,7 @@ static void handleSerialInput() {
       // and offsets the bound by 2*hyst so the closed reading is clearly outside the open zone.
       uint16_t raw = DoorSensor::getRaw();
       if (raw == 2048) {
-        Serial.println("[Agent1] Hall raw too close to midpoint; engage magnet then retry.");
+        Serial.println("[FaceGuard] Hall raw too close to midpoint; engage magnet then retry.");
         break;
       }
       uint16_t lo = SettingsStore::getHallLowerBound();
@@ -259,7 +259,7 @@ static void handleSerialInput() {
         // Positive deflection: update upper bound
         int new_hi = (int)raw - 2 * (int)HALL_HYSTERESIS;
         if (new_hi <= (int)lo + 2 * (int)HALL_HYSTERESIS) {
-          Serial.printf("[Agent1] Hall calibration rejected: raw=%u too close to lower bound.\n", raw);
+          Serial.printf("[FaceGuard] Hall calibration rejected: raw=%u too close to lower bound.\n", raw);
           break;
         }
         hi = (uint16_t)new_hi;
@@ -267,42 +267,42 @@ static void handleSerialInput() {
         // Negative deflection: update lower bound
         int new_lo = (int)raw + 2 * (int)HALL_HYSTERESIS;
         if (new_lo >= (int)hi - 2 * (int)HALL_HYSTERESIS) {
-          Serial.printf("[Agent1] Hall calibration rejected: raw=%u too close to upper bound.\n", raw);
+          Serial.printf("[FaceGuard] Hall calibration rejected: raw=%u too close to upper bound.\n", raw);
           break;
         }
         lo = (uint16_t)new_lo;
       }
       if (!SettingsStore::setHallBounds(lo, hi)) {
-        Serial.printf("[Agent1] Hall bounds rejected: lo=%u hi=%u\n", lo, hi);
+        Serial.printf("[FaceGuard] Hall bounds rejected: lo=%u hi=%u\n", lo, hi);
       } else {
         DoorSensor::setBounds(lo, hi);
-        Serial.printf("[Agent1] Hall bounds saved: lo=%u hi=%u\n", lo, hi);
+        Serial.printf("[FaceGuard] Hall bounds saved: lo=%u hi=%u\n", lo, hi);
       }
       break;
     }
     case 'd':
       // Simulate door toggle for testing (without hardware)
       if (sm.getDoorState() == DoorState::DOOR_CLOSED) {
-        Serial.println("[Agent1] door OPEN (manual)");
+        Serial.println("[FaceGuard] door OPEN (manual)");
         sm.onDoorChange(DoorState::DOOR_OPEN);
       } else {
-        Serial.println("[Agent1] door CLOSED (manual)");
+        Serial.println("[FaceGuard] door CLOSED (manual)");
         sm.onDoorChange(DoorState::DOOR_CLOSED);
       }
       break;
     case 'u':
-      Serial.println("[Agent1] unknown visitor CONFIRMED (manual)");
+      Serial.println("[FaceGuard] unknown visitor CONFIRMED (manual)");
       sm.onVoteResult(VoteResult::UNKNOWN_CONFIRMED);
       break;
     case 'e':
       if (!CameraAgent::isInitialized()) {
-        Serial.println("[Agent1] camera not ready — enroll unavailable");
+        Serial.println("[FaceGuard] camera not ready — enroll unavailable");
       } else if (FaceRecognizer::count() >= FaceRecognizer::MAX_FACES) {
-        Serial.printf("[Agent1] face bank full (%d/%d) — clear with 'r'\n",
+        Serial.printf("[FaceGuard] face bank full (%d/%d) — clear with 'r'\n",
                       FaceRecognizer::count(), FaceRecognizer::MAX_FACES);
       } else {
         CameraAgent::scheduleEnroll();
-        Serial.printf("[Agent1] enroll scheduled (%d/%d enrolled)\n",
+        Serial.printf("[FaceGuard] enroll scheduled (%d/%d enrolled)\n",
                       FaceRecognizer::count(), FaceRecognizer::MAX_FACES);
       }
       break;
@@ -311,25 +311,25 @@ static void handleSerialInput() {
       FaceRecognizer::clearAll();
       break;
     case 'n':
-      Serial.printf("[Agent1] enrolled faces: %d/%d\n",
+      Serial.printf("[FaceGuard] enrolled faces: %d/%d\n",
                     FaceRecognizer::count(), FaceRecognizer::MAX_FACES);
       break;
     case 'c':
-      Serial.printf("[Agent1] camera: init=%s lastDet=%lums\n",
+      Serial.printf("[FaceGuard] camera: init=%s lastDet=%lums\n",
                     CameraAgent::isInitialized() ? "OK" : "FAIL",
                     CameraAgent::lastDetectedMs());
       break;
     case 's':
-      Serial.printf("[Agent1] alert=%s door=%s agent2=%s alarm=%s\n",
+      Serial.printf("[FaceGuard] alert=%s door=%s agent2=%s alarm=%s\n",
                     alertLevelToString(sm.getAlertLevel()),
                     doorStateToString(sm.getDoorState()),
                     sm.isAgent2Online() ? "online" : "offline",
                     sm.isAlarmActive() ? "ACTIVE" : "off");
       break;
     case 'W':
-      Serial.println("[Agent1] Clearing WiFi credentials and restarting...");
+      Serial.println("[FaceGuard] Clearing WiFi credentials and restarting...");
       if (ConfigPortal::clearCredentials()) ESP.restart();
-      else Serial.println("[Agent1] Clear failed — NOT restarting.");
+      else Serial.println("[FaceGuard] Clear failed — NOT restarting.");
       break;
   }
 }
@@ -338,24 +338,24 @@ static void handleSerialInput() {
 
 void setup() {
   Serial.begin(115200);
-  Serial.println("[Agent1] boot");
-  Serial.println("[Agent1] WARNING: Dashboard HTTP only — LAN use only, not internet-safe.");
+  Serial.println("[FaceGuard] boot");
+  Serial.println("[FaceGuard] WARNING: Dashboard HTTP only — LAN use only, not internet-safe.");
 
   // Actuators first (visual boot indicator)
   LedController::begin(PIN_LED_DATA);
   BuzzerController::begin(PIN_BUZZER, BUZZER_DEFAULT_FREQ_HZ);
 
   // WiFi provisioning — blocks until connected or 5-min AP timeout
-  ConfigPortal::begin("Agent1-Setup");
+  ConfigPortal::begin("FaceGuard-Setup");
 
-  Serial.printf("[Agent1] WiFi connected. IP: %s  MAC: %s\n",
+  Serial.printf("[FaceGuard] WiFi connected. IP: %s  MAC: %s\n",
                 WiFi.localIP().toString().c_str(),
                 WiFi.macAddress().c_str());
 
-  if (!MDNS.begin(MDNS_AGENT1)) {
-    Serial.println("[Agent1] WARNING: mDNS start failed.");
+  if (!MDNS.begin(MDNS_FACEGUARD)) {
+    Serial.println("[FaceGuard] WARNING: mDNS start failed.");
   } else {
-    Serial.printf("[Agent1] mDNS: %s.local\n", MDNS_AGENT1);
+    Serial.printf("[FaceGuard] mDNS: %s.local\n", MDNS_FACEGUARD);
   }
 
   syncNtp();
@@ -369,7 +369,7 @@ void setup() {
   // Hall sensor
   uint16_t hallLo = SettingsStore::getHallLowerBound();
   uint16_t hallHi = SettingsStore::getHallUpperBound();
-  Serial.printf("[Agent1] Hall bounds: lo=%u hi=%u\n", hallLo, hallHi);
+  Serial.printf("[FaceGuard] Hall bounds: lo=%u hi=%u\n", hallLo, hallHi);
   DoorSensor::begin(PIN_HALL, hallLo, hallHi, HALL_HYSTERESIS);
   DoorSensor::setOnChange(onDoorChange);
 
@@ -390,9 +390,9 @@ void setup() {
 
   // HTTP server
   SessionAuth::begin(server);
-  DashboardServer::begin(server, sm, "Agent1", &faceVoter, &logManager);
+  DashboardServer::begin(server, sm, "FaceGuard", &faceVoter, &logManager);
   server.begin();
-  Serial.printf("[Agent1] HTTP server on port %d\n", HTTP_PORT);
+  Serial.printf("[FaceGuard] HTTP server on port %d\n", HTTP_PORT);
 
   // MQTT (may be unconfigured; AgentComm handles empty broker gracefully)
   AgentComm::setOnPresence(onPresence);
@@ -406,28 +406,28 @@ void setup() {
     String url = SettingsStore::getDiscordUrl();
     if (url.length() > 0) {
       String ip = WiFi.localIP().toString();
-      DiscordNotifier::notifyBoot(url, "[Agent1] Online — http://" + ip);
+      DiscordNotifier::notifyBoot(url, "[FaceGuard] Online — http://" + ip);
     }
     vTaskDelete(nullptr);
   }, "boot_notify", 8192, nullptr, 1, nullptr) != pdPASS) {
-    Serial.println("[Agent1] WARNING: boot_notify task creation failed.");
+    Serial.println("[FaceGuard] WARNING: boot_notify task creation failed.");
   }
 
   // Camera init (async, keeps loop() unblocked during esp_camera_init())
   xTaskCreate([](void*) {
     if (!CameraAgent::begin()) {
-      Serial.println("[Agent1] WARNING: camera init failed — face detection unavailable");
+      Serial.println("[FaceGuard] WARNING: camera init failed — face detection unavailable");
     } else {
       CameraAgent::startStreamServer();  // MJPEG on port 81
     }
     vTaskDelete(nullptr);
   }, "cam_init", 8192, nullptr, 1, nullptr);
 
-  Serial.println("[Agent1] ready");
-  Serial.println("[Agent1]   h=Hall value  H=auto-calibrate bounds  d=door toggle");
-  Serial.println("[Agent1]   u=unknown     e=enroll face     r=clear faces");
-  Serial.println("[Agent1]   n=face count  c=camera status   s=full status");
-  Serial.println("[Agent1]   W=clear WiFi credentials");
+  Serial.println("[FaceGuard] ready");
+  Serial.println("[FaceGuard]   h=Hall value  H=auto-calibrate bounds  d=door toggle");
+  Serial.println("[FaceGuard]   u=unknown     e=enroll face     r=clear faces");
+  Serial.println("[FaceGuard]   n=face count  c=camera status   s=full status");
+  Serial.println("[FaceGuard]   W=clear WiFi credentials");
 }
 
 void loop() {
@@ -455,7 +455,7 @@ void loop() {
                     FaceRecognizer::getLastMatchName(),
                     FaceRecognizer::getLastSim());
   } else if (vote == VoteResult::UNKNOWN_CONFIRMED) {
-    Serial.println("[Agent1] unknown visitor confirmed by vote window");
+    Serial.println("[FaceGuard] unknown visitor confirmed by vote window");
     logManager.logFace(FaceState::FACE_UNKNOWN, VoteResult::UNKNOWN_CONFIRMED, "", 0.0f);
     sm.onVoteResult(VoteResult::UNKNOWN_CONFIRMED);
   }
