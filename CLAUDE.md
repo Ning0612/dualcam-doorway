@@ -1,696 +1,245 @@
 # CLAUDE.md
 
-本專案為 **Agent 1：ESP32 智慧警戒保全與門禁紀錄系統**。  
-目標是在 ESP32 NMK99 + OV2640 Camera 上實作可獨立運作的門口警戒 agent，並能與 Agent 2（室內狀態 agent）交換狀態。
+Agent 1：ESP32 NMK99 + OV2640 智慧門口警戒系統。可離線獨立運作；MQTT 選配 Agent 2（室內 agent）協作。
 
 ---
 
 ## Build & Flash
 
-On Windows, `pio` is not in PATH. Use the full path:
+`pio` 不在 PATH，Windows 需完整路徑：
 
 ```powershell
-# Build
 & "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run -e agent1
-
-# Upload
-& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run -e agent1 -t upload
-
-# Serial monitor (replace COMX with actual port)
+& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run -e agent1 -t upload --upload-port COMX
 & "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" device monitor --port COMX
 ```
 
-`platformio.ini` defines a single environment (`agent1`):
-
-```ini
-[env]
-platform      = espressif32
-board         = esp32dev
-framework     = arduino
-monitor_speed = 115200
-
-[env:agent1]
-build_flags      = -I include -D AGENT1
-build_src_filter = -<*> +<main.cpp>
-```
-
-**Never use `board = esp32cam`.**  
-Libraries in `lib/` do NOT automatically see `include/` — the `-I include` flag is required.
+唯一環境 `agent1`。**禁止使用 `board = esp32cam`。**  
+`lib/` 無法自動看到 `include/` — `-I include` 旗標必須存在。
 
 ---
 
-## 1. 核心目標
+## GPIO 約束
 
-Agent 1 必須完成：
-
-- Camera 人臉辨識
-- 霍爾感應器偵測門開關
-- RGB LED 顯示警戒狀態
-- 蜂鳴器警示
-- Discord Webhook 通知
-- Local WebUI 設定與紀錄查詢
-- 與 Agent 2 交換室內狀態與警報決定
-
-**Agent 1 必須能在 Agent 2 離線時獨立運作。**
-
----
-
-## 2. 硬體
-
-### Sensors
-- OV2640 Camera（人臉辨識）
-- 霍爾感應器（偵測門開關）
-
-### Computing
-- ESP32 NMK99
-
-### Actuators
-- RGB LED（WS2812B 單顆可定址 NeoPixel，GPIO 32）
-- 蜂鳴器
-- Discord Webhook
-- Local WebUI
-
----
-
-## 3. GPIO 配置
-
-**Avoid:** GPIO 0, 2, 5, 6–11, 12, 18–19, 21–23, 25–27, 34–36, 39（Camera 或 boot-strap）  
-**Safe:** GPIO 13, 32, 33
-
-**GPIO 34, 35, 36, 39 是 input-only，無內部上拉電阻。**  
-**GPIO 25 / 26 / 27** 被 Camera 佔用（VSYNC / SIOD / SIOC），不可作為一般 GPIO。  
-**GPIO 32**：NMK99 上 CAM_PWDN 未接線，`pin_pwdn = -1`，因此 GPIO 32 可用作 WS2812B 資料線。
+**禁用（Camera / boot-strap）：** 0, 2, 5, 6–11, 12, 18–19, 21–23, 25–27, 34–36, 39  
+**可用：** 13, 32, 33
 
 ```
-PIN_LED_DATA = 32   // WS2812B 單顆 NeoPixel 資料線（NMK99 板載 LED）
-PIN_BUZZER   = 13   // 蜂鳴器（被動壓電式，LEDC PWM Channel 7）
-PIN_HALL     = 33   // 霍爾感應器（ADC1_CH5，WiFi 啟動後仍可使用）
+PIN_LED_DATA = 32  // WS2812B（NMK99 上 CAM_PWDN 未接線，pin_pwdn = -1）
+PIN_BUZZER   = 13  // LEDC PWM Channel 7
+PIN_HALL     = 33  // ADC1_CH5，WiFi 啟動後仍可用
 ```
 
-GPIO 0 為 CAM_XCLK，不可作為一般按鈕。WiFi 重設透過 Serial 'W' 指令執行。
+GPIO 34/35/36/39 input-only，無內部上拉。WiFi 重設用 Serial `W`，**不用 GPIO 0**。
 
 ---
 
-## 4. 主要狀態定義
+## 核心狀態 enum（states.h）
 
 ```cpp
-enum class DoorState {
-    DOOR_CLOSED,
-    DOOR_OPEN
-};
-
-enum class FaceState {
-    FACE_NO_FACE,
-    FACE_KNOWN,
-    FACE_UNKNOWN
-};
-
-enum class VoteResult {
-    NONE,
-    KNOWN_CONFIRMED,
-    UNKNOWN_CONFIRMED
-};
-
-enum class AlertLevel {
-    ALERT_GREEN,   // 已知使用者 / 正常
-    ALERT_YELLOW,  // Agent 2 回報室內有人
-    ALERT_RED      // Agent 2 離線 或 室內無人（預設）
-};
-
-enum class AlarmDecision {
-    NO_ACTION,
-    TRIGGER_ALARM,
-    CANCEL_ALARM
-};
+enum class DoorState   { DOOR_CLOSED, DOOR_OPEN };
+enum class VoteResult  { NONE, KNOWN_CONFIRMED, UNKNOWN_CONFIRMED };
+enum class AlertLevel  { ALERT_GREEN, ALERT_YELLOW, ALERT_RED };
+enum class AlarmDecision { NO_ACTION, TRIGGER_ALARM, CANCEL_ALARM };
+enum class AlertEvent  { UNKNOWN_VISITOR = 0, USER_RETURNED = 1, BOOT = 2 };
 ```
 
 ---
 
-## 5. 人臉辨識規則（FaceRecognizer）
+## 人臉辨識約束（FaceRecognizer）
 
-使用 **HOG-lite** 輕量梯度方向直方圖演算法，不使用大型 CNN。
+演算法為 **HOG-lite**（64-dim，4×4 cells × 4 bins）。詳細算法見 `docs/face-recognition.md`。
 
-**流程：**
-
-```
-Camera frame（YUV422，QVGA 320×240）
-  ↓
-frame 格式驗證（非 JPEG、有效解析度、PSRAM 存在）
-  ↓
-擷取中央 60% ROI（W/5..W*4/5, H/5..H*4/5）
-  ↓
-切成 4×4 grid = 16 cells
-每個 cell 計算 4-bin 無符號梯度方向直方圖（HOG-lite）：
-  中央差分：dx = Y(x+1)-Y(x-1), dy = Y(y+1)-Y(y-1)（Y channel only）
-  ax = |dx|, ay = |dy|；mag < 2 → 忽略（noise floor）
-  sameSign = (dx≥0)==(dy≥0)
-  ax >= ay → (sameSign ? bin 0 : bin 1)（水平主導）
-  ay >  ax → (sameSign ? bin 2 : bin 3)（垂直主導）
-→ 16 cells × 4 bins = 64 維 raw feature vector
-  ↓
-Per-cell L1 normalization → 統計 activeCells（cellEnergy/cellPix > 0.5f）
-Active-cells gate（activeCells < 4 → _extract() 回傳 0.f → NO_FACE）
-  ↓
-Global L2 normalization → 64-float unit vector
-  ↓
-Texture validation（totalEnergy/totalPix < FACE_TEXTURE_MIN_STDDEV (12.0) → 回傳 NO_FACE）
-  ↓
-是否有已註冊人臉？（_n == 0 → 回傳 NO_FACE）
-  ↓
-Per-user best-template cosine similarity（每位使用者最多 MAX_TEMPLATES_PER_USER = 5 個模板）
-取最高 similarity 的 user（bestSim）與第二高（secondSim）
-  ↓
-Margin check（≥ 2 人時：bestSim - secondSim < FACE_MARGIN_MIN (0.03) → UNKNOWN）
-  ↓
-Similarity ≥ FACE_SIMILARITY_THRESHOLD (0.90) → FACE_KNOWN
-否則 → FACE_UNKNOWN
-```
-
-**規則：**
-- 只處理 YUV422（YUYV）的 Y channel（byte index = pixel_index × 2）
-- ROI 取中央 60%（各方向各取 1/5 邊距）
-- Feature vector 為 **64 維**（4×4 cells × 4 orientation bins）
-- 每位使用者最多 **5 個模板**（`MAX_TEMPLATES_PER_USER = 5`）；同名 enroll 追加模板而非覆蓋
-- 最多支援 7 位使用者（`MAX_FACES = 7`）
-- 人臉資料儲存在 NVS（key: `face_feat`, `face_cnt`, `face_names`, `face_tcnt`）
-- Similarity ≥ `FACE_SIMILARITY_THRESHOLD` (0.90) 且 margin ≥ `FACE_MARGIN_MIN` (0.03) → FACE_KNOWN
-- 否則 → FACE_UNKNOWN
+**必須遵守：**
+- 只處理 YUV422 Y channel；QVGA 320×240；中央 60% ROI
+- 梯度用**中央差分**（`dx = Y(x+1)-Y(x-1)`），不用 Sobel
+- Active-cell gate 在 L2 normalize **之前**：`activeCells < 4 → NO_FACE`（active cell 定義：`cellEnergy/cellPix > 0.5f`）
+- Texture check：`totalEnergy/totalPix < 12.0 → NO_FACE`
+- 每人最多 5 個模板；同名 enroll = 追加模板（非覆蓋）
+- `similarity ≥ 0.90` 且 margin `≥ 0.03` → FACE_KNOWN
+- NVS keys：`face_feat`（blob, max 8960 B）、`face_cnt`、`face_names`、`face_tcnt`
 
 ---
 
-## 6. FaceVoter 規則
+## FaceVoter 規則
 
-不得使用單一 frame 直接觸發事件，所有辨識結果必須先經過 FaceVoter。
+**所有辨識結果必須過 FaceVoter，禁止單 frame 直接觸發事件。**
 
-**Known Confirmed：**
-- `FACE_VOTE_KNOWN_MIN` (3) hits 在 `FACE_VOTE_KNOWN_WINDOW_MS` (8 s) 內 → `KNOWN_CONFIRMED`
-- Confirmed 後記錄 `confirmedName`（從 `FaceRecognizer::getLastMatchName()` 取得）
-- 同一張臉連續在畫面中不得重複觸發，直到 idle reset
-
-**Unknown Confirmed：**
-- 持續偵測到 UNKNOWN 超過 `FACE_VOTE_WINDOW_MS` (10 s) 且至少 `FACE_VOTE_UNKNOWN_MIN_HITS` (10) 次 → `UNKNOWN_CONFIRMED`
-- 偶發 KNOWN raw result 不得立刻重置 unknown timer
-- Unknown 持續存在時，每隔 `FACE_VOTE_WINDOW_MS` 可重新觸發
-
-**Idle Reset（`FACE_VOTE_IDLE_MS` = 5 s 無臉）：**
-- 清除 counters、timers
-- 清除 `confirmedName`
-- 回到初始狀態
+| 結果 | 條件 |
+|------|------|
+| KNOWN_CONFIRMED | ≥ 3 hits 在 8 s 內；同臉不重複觸發直到 idle reset |
+| UNKNOWN_CONFIRMED | 持續 UNKNOWN ≥ 10 s 且 ≥ 10 hits；偶發 KNOWN 不重置 unknown timer |
+| Idle reset | 5 s 無臉 → 清除所有 counters/timers/confirmedName |
 
 ---
 
-## 7. 警戒狀態機（SecurityStateMachine）
-
-根據 `DoorState`、`VoteResult`、Agent 2 的 `presence_state` 決定 `AlertLevel`。
+## SecurityStateMachine 行為
 
 ### AlertLevel 計算
 
 | 條件 | AlertLevel |
-|------|------------|
+|------|-----------|
 | Agent 2 離線 OR presence = UNOCCUPIED | ALERT_RED |
 | presence = OCCUPIED | ALERT_YELLOW |
-| KNOWN_CONFIRMED（`KNOWN_GREEN_DURATION_MS` = 60s 窗口，無告警） | ALERT_GREEN |
+| KNOWN_CONFIRMED（60 s 窗口，無告警） | ALERT_GREEN |
 
-### LED 顯示優先級（updateLed() 在 main.cpp 統一管理）
+### LED 優先級（main.cpp `updateLed()`）
 
-| 優先級 | 條件 | LED 狀態 |
-|--------|------|---------|
-| 1（最高） | `isAlarmActive()` | 紅色閃爍（250ms） |
-| 2 | `ALERT_GREEN` | 綠色常亮 |
-| 3 | 偵測到任意人臉（DETECTED / KNOWN / UNKNOWN） | 白色常亮（fill light） |
-| 4（最低） | 無任何上述條件 | 關閉 |
+1. `isAlarmActive()` → 紅色閃爍 250ms
+2. ALERT_GREEN → 綠色常亮
+3. 任意人臉偵測到 → 白色常亮（fill light）
+4. 否則 → 關閉
 
-### Red Alert 行為
+### 警報行為
 
-- RGB LED 亮紅色（idle）
-- 若收到 `UNKNOWN_CONFIRMED`：
-  - LED 紅色閃爍
-  - 蜂鳴器警示（持續 `BUZZER_DURATION_MS` 後呼叫 `_cancelAlarm()`，完整取消警報）
-  - 發送 Discord webhook：`notifyWithPhoto()`（含相片）；`jpegBuf == nullptr` 或 multipart body 記憶體失敗時 fallback 純文字 `notify()`（HTTP 失敗不 fallback）
-  - 記錄警戒事件至 Alert Log
+- **Red UNKNOWN_CONFIRMED**：LED 閃爍 + 蜂鳴器 + `notifyWithPhoto()`（`!jpegBuf || jpegLen==0` 或 multipart alloc 失敗時，`notifyWithPhoto()` 內部 fallback `notify()`；photo HTTP 失敗時，main.cpp 外層 `!sent` 亦 fallback 純文字 `notify()`）+ Alert Log
+- **Yellow UNKNOWN_CONFIRMED**：MQTT publish alert → 等 Agent 2 `alarm_decision`（逾時 30 s → TRIGGER_ALARM）
+- `_cancelAlarm()` = 完整取消（同時觸發 buzzer silence + alarm cancelled callback）
+- `_silenceBuzzer()` ≠ `_cancelAlarm()`，兩者是不同操作
 
-### Yellow Alert 行為
+### 警報取消條件（任一）
 
-- RGB LED 亮紅色（idle；YELLOW 在 LED 上與 idle RED 相同）
-- 若收到 `UNKNOWN_CONFIRMED`：
-  - 通知 Agent 2（MQTT publish `home/security/alert`）
-  - 等待 Agent 2 回傳 `alarm_decision`（逾時 `ALARM_DECISION_TIMEOUT_MS` = 30s → 預設 TRIGGER_ALARM）
-  - `TRIGGER_ALARM` → 啟動蜂鳴器 + LED 紅色閃爍
-  - `CANCEL_ALARM` → 取消警戒並記錄
+蜂鳴器持續時間到期 / 門關閉 / KNOWN_CONFIRMED 收到
 
-### Green / Normal 行為
+### 邊界行為
 
-- RGB LED 亮綠色（60s 窗口內）
-- KNOWN_CONFIRMED 時記錄 Face Log、Door Log（若門已開）、Discord 通知（已知使用者回家）
+- `onFaceKnownRaw(name)`：每 loop() raw KNOWN 時呼叫，維護 `_lastSeenKnownName`；供門開時使用者歸因
+- `onAgent2Online(false)`：若在 `_waitingForDecision` 中，立即 TRIGGER_ALARM
+- `onAlarmDecision(TRIGGER_ALARM)`：只在 `_waitingForDecision` 下生效，防 retained MQTT 誤觸；`CANCEL_ALARM` 無論 `_waitingForDecision` 狀態均清除等待並呼叫 `_cancelAlarm()`（alarm 未啟動時為 no-op）
+- `_returnFired` 旗標防同一綠燈窗口內重複觸發「已知使用者回家」
 
-### 警報自動取消條件（任一觸發即取消）
+---
 
-| 條件 | 說明 |
+## 不可違反規則
+
+- 禁止單 frame 直接觸發事件（必過 FaceVoter）
+- 禁止略過 texture validation 或 active-cell gate
+- 禁止 WebUI 參與核心決策邏輯
+- 禁止依賴 Agent 2 才能警戒
+- 禁止因 WiFi / Discord / NTP / MQTT 失敗停止本機功能
+- 禁止 ESP32 主流程加入大型 CNN
+- SSM 禁止直接操作硬體或網路，所有副作用透過 callback
+
+---
+
+## 模組職責
+
+| 模組 | 職責 | 禁止 |
+|------|------|------|
+| FaceRecognizer | HOG-lite 特徵萃取、cosine similarity、NVS 人臉管理 | 警報決策 |
+| FaceVoter | temporal voting、confirmed 判定、idle reset | 影像特徵萃取 |
+| CameraAgent | camera init、MJPEG stream、enroll 排程 | 辨識決策 |
+| DoorSensor | 霍爾 ADC、去彈跳、DoorState 輸出 | 警戒決策 |
+| SecurityStateMachine | AlertLevel 計算、alarm callback | 影像處理、硬體直接控制 |
+| AgentComm | MQTT publish/subscribe | 決策邏輯 |
+| DiscordNotifier | HTTPS webhook、TLS、rate limit | 阻塞主流程 |
+| ConfigPortal | AP mode、WiFi 首次設定 | 其他設定 |
+| ConfigManager | MQTT + 蜂鳴器 NVS 讀寫 | WiFi 設定 |
+| SettingsStore | dashboard_pw、discord_url、hall_lo/hi NVS 讀寫 | WiFi 設定 |
+| DashboardServer | HTTP routes、PROGMEM HTML | 核心決策邏輯 |
+| LogManager | RAM ring buffer + SPIFFS NDJSON | 警戒決策 |
+
+---
+
+## NVS Key Map（namespace `"agent_cfg"`）
+
+| Key | Owner | Type | 備註 |
+|-----|-------|------|------|
+| `wifi_ssid` / `wifi_pw` | ConfigPortal | String | max 32 / 64 chars |
+| `dashboard_pw` | SettingsStore | String | salted SHA-256 hex |
+| `pw_changed` | SettingsStore | Bool | 首次改密旗標 |
+| `discord_url` | SettingsStore | String | max 256 chars |
+| `hall_lo` / `hall_hi` | SettingsStore | UInt32 | open zone 邊界；form field 名為 `hall_lower`/`hall_upper` |
+| `mqtt_broker` | ConfigManager | String | max 63 chars |
+| `mqtt_port` | ConfigManager | UInt16 | default 1883 |
+| `buzzer_freq` | ConfigManager | UInt32 | Hz；WebUI 輸入 Hz |
+| `buzzer_dur` | ConfigManager | UInt32 | ms；WebUI 輸入秒×1000 |
+| `face_feat` | FaceRecognizer | Blob | max 8960 B（7×5×64×4） |
+| `face_cnt` | FaceRecognizer | UInt8 | enrolled user 數 |
+| `face_names` / `face_tcnt` | FaceRecognizer | Blob | 119 B / MAX_FACES B |
+
+> NVS size mismatch on `_load()` → sets `_n = 0`，呼叫 `_persist()`（非 clearAll callback）
+
+---
+
+## 關鍵計時常數（config.h）
+
+| 常數 | 值 | 說明 |
+|------|-----|------|
+| `FACE_SIMILARITY_THRESHOLD` | 0.90 | cosine similarity 門檻 |
+| `FACE_MARGIN_MIN` | 0.03 | 防誤認分差 |
+| `FACE_TEXTURE_MIN_STDDEV` | 12.0 | mean L1 gradient 最低值 |
+| `FACE_VOTE_KNOWN_MIN` | 3 | KNOWN_CONFIRMED 最少 hits |
+| `FACE_VOTE_KNOWN_WINDOW_MS` | 8000 | KNOWN 累積窗口 |
+| `FACE_VOTE_WINDOW_MS` | 10000 | UNKNOWN_CONFIRMED 持續時間 |
+| `FACE_VOTE_UNKNOWN_MIN_HITS` | 10 | UNKNOWN_CONFIRMED 最少 hits |
+| `FACE_VOTE_IDLE_MS` | 5000 | 無臉 idle reset |
+| `HALL_DEFAULT_LOWER/UPPER` | 1000 / 3000 | open zone 預設邊界 |
+| `HALL_HYSTERESIS` | 150 | 死區半寬 |
+| `BUZZER_DURATION_MS` | 60000 | 警報後呼叫 `_cancelAlarm()` |
+| `AGENT2_OFFLINE_TIMEOUT_MS` | 15000 | 無 presence → 離線 |
+| `ALARM_DECISION_TIMEOUT_MS` | 30000 | Yellow alert 等待 Agent 2（SecurityStateMachine.h） |
+| `KNOWN_GREEN_DURATION_MS` | 60000 | KNOWN_CONFIRMED 保持 GREEN（SecurityStateMachine.h） |
+| `DISCORD_RATE_LIMIT_MS` | 30000 | 同 AlertEvent 最少間隔 |
+| `DISCORD_FAIL_COOLDOWN_MS` | 300000 | 連線失敗後封鎖 |
+
+---
+
+## 錯誤處理
+
+| 錯誤 | 行為 |
 |------|------|
-| 蜂鳴器持續時間結束 | `BUZZER_DURATION_MS`（預設 60s）後呼叫 `_cancelAlarm()`，完整取消警報 |
-| 門關閉時 | `onDoorChange(DOOR_CLOSED)` 在警報中 → 呼叫 `_cancelAlarm()` |
-| KNOWN_CONFIRMED 收到時 | `onVoteResult(KNOWN_CONFIRMED)` 在警報中 → 呼叫 `_cancelAlarm()` |
-
-> `_silenceBuzzer()`（僅靜音）與 `_cancelAlarm()`（完整取消）是兩個不同操作。
-
-### 其他事件輸入與邊界行為
-
-- **`onFaceKnownRaw(name)`**：每 loop() 在 raw KNOWN 時呼叫，更新 `_lastSeenKnownName` 與時間戳；DOOR_OPEN 時若 KNOWN_GREEN 窗口已過期但臉仍在畫面中，仍可用此歸因使用者
-- **`onAgent2Online(false)`**：若正在等待 Agent 2 決策（`_waitingForDecision`），Agent 2 離線直接觸發 `TRIGGER_ALARM`，不等 timeout
-- **`onAlarmDecision(TRIGGER_ALARM)`**：只在 `_waitingForDecision` 狀態下生效，防止 retained/replayed MQTT 訊息影響
-- **`onDoorChange(DOOR_OPEN)`**：套用 pending 或 last-seen known user 歸因，`_returnFired` 旗標防止同一段綠燈窗口內重複觸發「已知使用者回家」事件
+| WiFi 失敗 | 不停本機警戒；重連後恢復 MQTT / Discord |
+| WiFi 持續斷線 5 min | `ESP.restart()` → Config Portal |
+| NTP 失敗 | 繼續運作；log 用相對時間；略過 SPIFFS 寫入 |
+| Camera 失敗 | face state → NO_FACE；不 crash |
+| Agent 2 離線 | ALERT_RED；Agent 1 獨立警戒 |
+| MQTT 斷線 | 背景重連；重連後重新 subscribe |
+| Discord 失敗 | 不阻塞；5 min cooldown；`notifyBoot()` 不受影響 |
 
 ---
 
-## 8. 門禁事件規則
+## Session Auth
 
-### Known User Confirmed
-
-FaceVoter 輸出 `KNOWN_CONFIRMED` 時：
-- 記錄 Face Log（使用者名稱、時間、similarity）
-- 更新 WebUI 顯示
-- 發送 face event 給 Agent 2（MQTT publish `home/security/face`）
-
-### User Returned（已知使用者 + 門被打開）
-
-- 記錄 Door Log（使用者名稱、時間）
-- 發送 Discord：`Agent 1：<name> 回家`
-- 發送 known user entry event 給 Agent 2
-
-### Unknown Visitor
-
-FaceVoter 輸出 `UNKNOWN_CONFIRMED` 時：
-- 記錄 Alert Log
-- 依 AlertLevel 處理警報
-- 發送 alert event 給 Agent 2（MQTT publish `home/security/alert`）
-
----
-
-## 9. WiFi 與 AP 模式
-
-**開機流程：**
-
-```
-Power on
-  ↓
-讀取 NVS → wifi_ssid / wifi_pw 是否存在？
-  ├─ Yes → WiFi.begin(ssid, pw) — 15 s timeout
-  │         ├─ Connected → NTP sync → 啟動 WebUI → Discord online 通知
-  │         └─ Failed → enter Config Portal
-  └─ No  → enter Config Portal
-              ↓
-           AP Mode: "Agent1-Setup"（密碼: dualcam99）
-              ↓
-           Serve HTML form at 192.168.4.1
-              ↓
-           POST /save → 寫入 NVS → ESP.restart()
-              ↓
-           無 POST 5 min → restart
-```
-
-**AP / WebUI 至少支援設定：**
-- WiFi SSID / Password（含 WiFi Scan）
-- Discord Webhook URL
-- WebUI 登入帳密
-- Face similarity threshold
-- FaceVoter 參數
-
----
-
-## 10. Agent 2 通訊（MQTT）
-
-使用 MQTT，Broker 位址由 ConfigManager 設定。
-
-**Agent 1 Publish：**
-
-```
-home/security/door    — DoorState 變更
-home/security/face    — KNOWN_CONFIRMED 事件
-home/security/alert   — UNKNOWN_CONFIRMED 事件
-home/security/status  — 週期性心跳（AlertLevel, uptime 等）
-```
-
-**Agent 1 Subscribe：**
-
-```
-home/home_state/presence       — Agent 2 室內人員狀態
-home/home_state/alarm_decision — Agent 2 警報決定
-```
-
-**接收 presence 範例：**
-
-```json
-{
-  "presence_state": "OCCUPIED",
-  "presence_score": 3,
-  "timestamp": "2025-12-20T18:30:05+08:00"
-}
-```
-
-- `OCCUPIED` → `ALERT_YELLOW`
-- `UNOCCUPIED` → `ALERT_RED`
-
-**接收 alarm_decision 範例：**
-
-```json
-{
-  "alarm_decision": "CANCEL_ALARM",
-  "source": "button",
-  "timestamp": "2025-12-20T18:30:08+08:00"
-}
-```
-
-- `TRIGGER_ALARM` → 啟動蜂鳴器 + LED 閃爍
-- `CANCEL_ALARM` → 取消警戒並記錄
-- `NO_ACTION` → 不變更
-
-**Agent 2 離線時（MQTT 斷線或 subscribe 超時）：** 預設維持 `ALERT_RED`，Agent 1 獨立警戒。
-
----
-
-## 11. Local WebUI
-
-WebUI 為管理介面，不可成為核心決策邏輯。
-
-**實際路由（與程式碼同步）：**
-
-| 路徑 | Method | Auth | CSRF | 說明 |
-|------|--------|------|------|------|
-| `/` | GET | — | — | redirect → `/dashboard` |
-| `/login` | GET/POST | — | — | 登入（SessionAuth 管理） |
-| `/logout` | GET | session | — | 登出 |
-| `/password/change` | GET | session | — | 首次登入強制密碼修改頁 |
-| `/password/save` | POST | session | ✓ | 儲存新密碼 |
-| `/dashboard` | GET | session + 改密 | — | 即時狀態（3s AJAX）+ Camera preview + 人臉管理 |
-| `/settings` | GET | session + 改密 | — | **統一設定頁**（Discord、MQTT、霍爾、蜂鳴器、密碼） |
-| `/settings/save` | POST | session + 改密 | ✓ | 儲存設定 |
-| `/log/door` | GET | session + 改密 | — | 門禁紀錄頁面（含 RAM + SPIFFS 月份切換） |
-| `/log/face` | GET | session + 改密 | — | 人臉辨識紀錄頁面 |
-| `/log/alert` | GET | session + 改密 | — | 警戒事件紀錄頁面 |
-| `/analytics` | GET | session + 改密 | — | 統計分析頁面（門次、面孔排行、峰值時段） |
-| `/api/status` | GET | session + 改密 | — | JSON 即時狀態（見下方欄位） |
-| `/api/log/door` | GET | session + 改密 | — | 門禁紀錄 JSON（RAM 最近 50 筆） |
-| `/api/log/face` | GET | session + 改密 | — | 人臉辨識紀錄 JSON |
-| `/api/log/alert` | GET | session + 改密 | — | 警戒事件紀錄 JSON |
-| `/api/log/door/paged` | GET | session + 改密 | — | SPIFFS 分頁（?month=YYYYMM&page=N&per_page=20） |
-| `/api/log/face/paged` | GET | session + 改密 | — | SPIFFS 分頁 |
-| `/api/log/alert/paged` | GET | session + 改密 | — | SPIFFS 分頁 |
-| `/api/log/stats` | GET | session + 改密 | — | 月份統計 JSON（?month=YYYYMM） |
-| `/api/log/months` | GET | session + 改密 | — | 有資料月份列表 JSON |
-| `/api/face/enroll` | POST | session + 改密 | ✓ | 觸發人臉註冊（form-urlencoded: csrf + name） |
-| `/api/face/list` | GET | session + 改密 | — | 已註冊人臉名稱列表 JSON |
-| `/api/face/clear` | POST | session + 改密 | ✓ | 清除所有人臉資料 |
-| `/api/buzzer/test` | POST | session | ✓ | 測試蜂鳴器（?freq= 可選） |
-
-> WiFi 設定**不**在 WebUI，只能透過 Config Portal（AP 模式）設定。  
-> `session + 改密` = 需 session 且已修改預設密碼，否則 redirect `/password/change`。
-
-**設計限制：**
-- HTML 儲存於 PROGMEM `const char[]`，無 LittleFS
-- 無外部 CDN，無 React/Vue
-- `/api/status` 欄位包含：`alert_level`, `door_state`, `agent2_online`, `alarm_active`, `last_known_user`, `presence_state`, `uptime`, `hall_raw`, `hall_lower`, `hall_upper`, `face_count`, `face_max`, `face_result`, `face_name`, `face_sim`, `face_tex`, `face_voter_*`
-- 使用 ArduinoJson `JsonDocument`（非固定大小 StaticJsonDocument）
-
----
-
-## 12. Session Auth
-
-- Username: `admin`（hardcoded）
-- Password: salted SHA-256 hex 存於 NVS key `dashboard_pw`；預設密碼強制變更
-- Session token: 16-byte random hex；in-memory；`ESP.restart()` 或 logout 時失效
-- Cookie: `sid=<token>; HttpOnly; Path=/; SameSite=Lax`
-- TTL: 30 min 無操作；每次授權請求重置
-- CSRF: 所有 state-changing POST 驗證 CSRF token
+- Username: `admin`（hardcoded）；Password: salted SHA-256 存 NVS `dashboard_pw`
+- Session token: 16-byte random hex，in-memory，TTL 30 min（每次請求重置）
+- Cookie: `sid=...; HttpOnly; Path=/; SameSite=Lax`
+- CSRF: 所有 state-changing POST 必驗；per-boot random hex token
 - Brute-force: 5 次失敗 → 60 s lockout
 
 ---
 
-## 13. NVS Key Map
+## WebUI 關鍵約束
 
-所有 key 共用 namespace `"agent_cfg"`。
-
-| Key | Owner | Type | Notes |
-|-----|-------|------|-------|
-| `wifi_ssid` | ConfigPortal | String | max 32 chars |
-| `wifi_pw` | ConfigPortal | String | max 64 chars |
-| `dashboard_pw` | SettingsStore | String | salted SHA-256 hex（NVS key 為 `dashboard_pw`） |
-| `pw_changed` | SettingsStore | Bool | 是否已修改過預設密碼 |
-| `discord_url` | SettingsStore | String | `https://discord.com/api/webhooks/` prefix; max 256 chars |
-| `hall_lo` | SettingsStore | UInt32 | 霍爾感應器 open zone 下界；預設 1000 |
-| `hall_hi` | SettingsStore | UInt32 | 霍爾感應器 open zone 上界；預設 3000 |
-| `mqtt_broker` | ConfigManager | String | MQTT broker IP/hostname; max 64 chars |
-| `mqtt_port` | ConfigManager | UInt16 | default 1883 |
-| `buzzer_freq` | ConfigManager | UInt32 | 蜂鳴器頻率 Hz；default 2000；range 200–8000 |
-| `buzzer_dur` | ConfigManager | UInt32 | 蜂鳴器持續時間 ms；default 60000；range 10000–300000 |
-| `face_feat` | FaceRecognizer | Blob | 最大 7×5×64×4 = 8960 bytes (float32)；實際寫入量 = enrolled_count × MAX_TEMPLATES_PER_USER × FEATURE_DIM × 4 |
-| `face_cnt` | FaceRecognizer | UInt8 | enrolled user count; 0 = none |
-| `face_names` | FaceRecognizer | Blob | MAX_FACES × (MAX_NAME_LEN+1) = 7×17 = 119 bytes |
-| `face_tcnt` | FaceRecognizer | Blob | per-user template counts; MAX_FACES bytes |
+- HTML 在 PROGMEM `const char[]`，無 LittleFS、無外部 CDN
+- WiFi 設定**僅限** Config Portal（AP 模式），WebUI 不處理
+- `session + 改密` = 需 session 且 `pw_changed == true`，否則 redirect `/password/change`
+- 所有 state-changing POST 需 CSRF token
+- 完整路由表見 `docs/webui.md`
 
 ---
 
-## 14. Discord Webhook 通知
+## MQTT Topics
 
-```cpp
-// Returns true if sent, false if rate-limited, cooldown, invalid URL, or error.
-// event: AlertEvent 用於 per-event rate limiting（取代舊 SystemState）
-static bool DiscordNotifier::notify(const String& webhookUrl, AlertEvent event,
-                                    const String& message);
-
-// Send with JPEG photo attachment（multipart/form-data）
-// jpegBuf 所有權留呼叫者；不釋放。jpegBuf=nullptr 或 multipart body 記憶體失敗時
-// fallback 為純文字 notify()；HTTP POST 失敗不會 fallback。
-static bool DiscordNotifier::notifyWithPhoto(const String& webhookUrl, AlertEvent event,
-                                              const String& message,
-                                              const uint8_t* jpegBuf, size_t jpegLen);
-
-// One-shot boot notification; 不更新 _failCooldownUntil 或 _lastNotifyMs
-static bool DiscordNotifier::notifyBoot(const String& webhookUrl, const String& message);
+```
+Publish:   home/security/door | face | alert | status
+Subscribe: home/home_state/presence | alarm_decision
 ```
 
-**AlertEvent enum（states.h）：**
+Agent 2 離線（15 s 無 presence）→ ALERT_RED。完整 payload 格式見 `docs/mqtt.md`。
 
-```cpp
-enum class AlertEvent { UNKNOWN_VISITOR = 0, USER_RETURNED = 1, BOOT = 2 };
-```
+---
 
-**觸發事件：**
-- `UNKNOWN_CONFIRMED`（Red Alert）→ `notifyWithPhoto()`（含相片）；`jpegBuf == nullptr` 時 fallback `notify()`
-- Known user 回家（KNOWN_CONFIRMED + 門開啟） → `notify(AlertEvent::USER_RETURNED)`
-- 開機 IP 公告 → `notifyBoot()`
+## Discord 規則
 
-**設計規則：**
-- TLS: `WiFiClientSecure` with CA root cert（`DISCORD_TLS_INSECURE` flag 才能 setInsecure）；需在 `platformio.ini` 定義其中一個，否則編譯失敗
 - URL whitelist: `https://discord.com/api/webhooks/` 或 `https://discordapp.com/api/webhooks/`
-- Timeout: 5 s（connect + read）
-- Rate limit: 同 AlertEvent 最少間隔 30 s（各事件獨立計時）
-- Fail cooldown: 連線失敗後 5 min 封鎖所有通知；`notifyBoot()` 不受此影響
-- Non-blocking: 所有前置檢查（`_canSend()`）在 network I/O 前完成
-- Log masking: 只印出 webhook URL 最後 8 字元
+- TLS: 需定義 `DISCORD_TLS_INSECURE` 或 `DISCORD_ROOT_CA_CERT`，否則編譯失敗
+- fallback：`notifyWithPhoto()` 內部僅在 `!jpegBuf || jpegLen==0` 或 multipart alloc 失敗時 fallback `notify()`；main.cpp 外層在 `!sent`（含 HTTP 失敗）亦 fallback 純文字 `notify()`
+- Log: 只印 webhook URL 最後 8 字元
 
 ---
 
-## 15. Log 系統（LogManager）
-
-RAM 環形緩衝區各保留最近 **50 筆**；同時支援 **SPIFFS 持久化儲存**（月份分檔 NDJSON）。
-
-**Storage tiers：**
-- **RAM ring buffer**（即時查詢）：最近 50 筆，`getFaceLogJson()` 等 API
-- **SPIFFS 持久化**（歷史查詢）：月份分檔 `/face_YYYYMM.ndjson`、`/door_YYYYMM.ndjson`、`/alert_YYYYMM.ndjson`（SPIFFS 根目錄）；`beginSpiffs()` 啟用；NTP 未同步時略過寫入
-
-**查詢 API：**
-- `getXxxLogJson()` — RAM ring（最近 50 筆）
-- `getXxxLogPagedJson(month, page, perPage)` — SPIFFS 分頁（`{total, page, per_page, data[]}`）
-- `getStatsJson(month)` — 月份統計（today/week/month count、daily_week[7]）
-- `getAvailableMonthsJson()` — 已有資料的月份列表（降序）
-
-### Face Log
-
-```json
-{
-  "timestamp": "...",
-  "face_state": "FACE_KNOWN",
-  "vote_result": "KNOWN_CONFIRMED",
-  "user_name": "Alice",
-  "similarity": 0.95
-}
-```
-
-### Door Log
-
-```json
-{
-  "timestamp": "...",
-  "door_state": "DOOR_OPEN",
-  "related_user": "Alice"
-}
-```
-
-### Alert Log
-
-```json
-{
-  "timestamp": "...",
-  "alert_level": "ALERT_RED",
-  "alert_type": "UNKNOWN_VISITOR",
-  "alarm_decision": "TRIGGER_ALARM",
-  "discord_result": true
-}
-```
-
----
-
-## 16. 程式架構
-
-```
-src/
-  main.cpp
-
-lib/
-  FaceRecognizer/
-    FaceRecognizer.h
-    FaceRecognizer.cpp
-  FaceVoter/
-    FaceVoter.h
-    FaceVoter.cpp
-  CameraAgent/
-    CameraAgent.h
-    CameraAgent.cpp
-  DoorSensor/
-    DoorSensor.h
-    DoorSensor.cpp
-  LedController/
-    LedController.h
-    LedController.cpp
-  BuzzerController/
-    BuzzerController.h
-    BuzzerController.cpp
-  SecurityStateMachine/
-    SecurityStateMachine.h
-    SecurityStateMachine.cpp
-  AgentComm/
-    AgentComm.h
-    AgentComm.cpp
-  DiscordNotifier/
-    DiscordNotifier.h
-    DiscordNotifier.cpp
-  ConfigPortal/
-    ConfigPortal.h
-    ConfigPortal.cpp
-  ConfigManager/
-    ConfigManager.h
-    ConfigManager.cpp
-  SettingsStore/
-    SettingsStore.h
-    SettingsStore.cpp
-  SessionAuth/
-    SessionAuth.h
-    SessionAuth.cpp
-  DashboardServer/
-    DashboardServer.h
-    DashboardServer.cpp
-  LogManager/
-    LogManager.h
-    LogManager.cpp
-
-include/
-  config.h
-  pins.h
-  states.h
-  messages.h
-```
-
----
-
-## 17. 模組職責
-
-| 模組 | 職責 | 禁止 |
-|------|------|------|
-| FaceRecognizer | ROI 擷取、feature vector、texture validation、cosine similarity、NVS 人臉管理 | 警報決策 |
-| FaceVoter | temporal voting、KNOWN/UNKNOWN confirmed、idle reset | 影像特徵萃取 |
-| CameraAgent | camera init、MJPEG stream、frame capture、enroll 排程 | 辨識決策 |
-| DoorSensor | 霍爾感應器 ADC 讀取、去彈跳、DoorState 輸出 | 警戒決策 |
-| LedController | RGB LED 狀態控制（常亮/閃爍）| 決策邏輯 |
-| BuzzerController | 蜂鳴器開關、pattern | 決策邏輯 |
-| SecurityStateMachine | AlertLevel 計算、已知使用者事件、unknown alert、alarm decision 處理 | 影像處理 |
-| AgentComm | MQTT publish/subscribe、presence 與 alarm_decision 接收 | 決策邏輯 |
-| DiscordNotifier | HTTPS webhook、TLS、rate limit、failure cooldown | 阻塞主流程 |
-| ConfigPortal | AP mode、WiFi 首次設定 | 其他設定 |
-| ConfigManager | MQTT 設定、蜂鳴器頻率與持續時間的 NVS 讀寫 | WiFi 設定 |
-| SettingsStore | dashboard_pw、pw_changed、discord_url、霍爾感應器 hall_lo/hall_hi 的 NVS 讀寫 | WiFi 設定 |
-| SessionAuth | session token、cookie、TTL、brute-force throttle、CSRF | 業務邏輯 |
-| DashboardServer | HTTP routes、PROGMEM HTML、AJAX API | 核心決策邏輯 |
-| LogManager | Face/Door/Alert log 的 in-memory ring buffer 與 JSON 序列化 | 警戒決策 |
-
----
-
-## 18. 錯誤處理規則
-
-| 錯誤 | 處理方式 |
-|------|----------|
-| WiFi 失敗 | 不停止本機警戒；可進入 AP mode；重連後恢復 Discord 與 AgentComm |
-| NTP 失敗 | 系統繼續運作；log 標記 `time_unsynced` |
-| Camera 失敗 | 不 crash；face state 設為 FACE_NO_FACE；持續嘗試恢復 |
-| Agent 2 離線 | 預設 ALERT_RED；Agent 1 獨立警戒 |
-| MQTT 斷線 | 不停止本機警戒；背景重連；重連後重新 subscribe |
-| Discord 失敗 | 不阻塞主流程；記錄失敗狀態；5 min cooldown |
-
----
-
-## 19. 不可違反規則
-
-- 不可用單一 frame 直接觸發事件
-- 不可略過 FaceVoter
-- 不可略過 texture validation
-- 不可讓 WebUI 成為核心決策邏輯
-- 不可依賴 Agent 2 才能警戒
-- 不可因 WiFi / Discord / NTP / MQTT 失敗停止本機功能
-- 不可在 ESP32 主流程加入大型 CNN
-
----
-
-## 20. 計時常數（config.h）
-
-| 常數 | 值 | 來源 | 說明 |
-|------|-----|------|------|
-| `FACE_VOTE_WINDOW_MS` | 10000 | config.h | UNKNOWN_CONFIRMED 最短持續時間 |
-| `FACE_VOTE_IDLE_MS` | 5000 | config.h | 無臉 idle reset 時間 |
-| `FACE_VOTE_KNOWN_MIN` | 3 | config.h | KNOWN_CONFIRMED 最少 hit 數 |
-| `FACE_VOTE_KNOWN_WINDOW_MS` | 8000 | config.h | KNOWN hit 累積時間窗口 |
-| `FACE_VOTE_UNKNOWN_MIN_HITS` | 10 | config.h | UNKNOWN_CONFIRMED 最少 frame 數 |
-| `FACE_SIMILARITY_THRESHOLD` | **0.90** | config.h | cosine similarity 門檻 |
-| `FACE_MARGIN_MIN` | **0.03** | config.h | 第二高 user 最低分差（防誤認） |
-| `FACE_TEXTURE_MIN_STDDEV` | **12.0** | config.h | mean L1 gradient per pixel 最低值 |
-| `FACE_RECENT_MS` | 10000 | config.h | 視為「當前有臉」的時間窗口 |
-| `DOOR_DEBOUNCE_MS` | 200 | config.h | 霍爾感應器去彈跳 |
-| `HALL_DEFAULT_LOWER` | **1000** | config.h | 霍爾 open zone 下界預設 |
-| `HALL_DEFAULT_UPPER` | **3000** | config.h | 霍爾 open zone 上界預設 |
-| `HALL_HYSTERESIS` | 150 | config.h | 死區半寬（各邊界各側） |
-| `HALL_SAMPLE_INTERVAL_MS` | 50 | config.h | ADC 採樣頻率 |
-| `WIFI_CONNECT_TIMEOUT_MS` | 15000 | config.h | STA 連線逾時 |
-| `PORTAL_TIMEOUT_MS` | 300000 | config.h | AP mode 無 POST → restart |
-| `WIFI_LOST_TIMEOUT_MS` | 300000 | config.h | 持續斷線 → restart to portal |
-| `MQTT_DEFAULT_PORT` | 1883 | config.h | MQTT 預設埠號 |
-| `MQTT_RECONNECT_MS` | 5000 | config.h | MQTT 重連間隔 |
-| `MQTT_KEEPALIVE_S` | 60 | config.h | MQTT Keep-alive |
-| `AGENT2_OFFLINE_TIMEOUT_MS` | 15000 | config.h | 無 presence → Agent 2 離線 |
-| `DISCORD_RATE_LIMIT_MS` | 30000 | config.h | 同 AlertEvent 最短通知間隔 |
-| `DISCORD_TIMEOUT_MS` | 5000 | config.h | webhook 連線逾時 |
-| `DISCORD_FAIL_COOLDOWN_MS` | 300000 | config.h | 連線失敗後 cooldown |
-| `BUZZER_DEFAULT_FREQ_HZ` | **2000** | config.h | 蜂鳴器預設頻率（Hz） |
-| `BUZZER_DURATION_MS` | **60000** | config.h | 警報蜂鳴器自動靜音時間 |
-| `BUZZER_TEST_DURATION_MS` | **500** | config.h | 測試嗶聲持續時間 |
-| `DASHBOARD_SESSION_TTL_MS` | 1800000 | config.h | session 30 min TTL |
-| `LOGIN_LOCKOUT_MS` | 60000 | config.h | 暴力破解 lockout 60 s |
-| `LOGIN_MAX_FAILS` | 5 | config.h | 最大失敗次數 |
-| `CAMERA_DETECT_INTERVAL_MS` | 500 | config.h | 人臉偵測頻率 |
-| `CAMERA_ENROLL_TIMEOUT_MS` | 10000 | config.h | Enroll 等待逾時 |
-| `ALARM_DECISION_TIMEOUT_MS` | 30000 | SecurityStateMachine.h | Yellow alert 等待 Agent 2 決定逾時 |
-| `KNOWN_GREEN_DURATION_MS` | 60000 | SecurityStateMachine.h | KNOWN_CONFIRMED 保持 GREEN 的時間窗口 |
-
----
-
-## 21. Logging Convention
+## Logging Convention
 
 ```
 [Agent1] boot
