@@ -70,5 +70,5 @@
 
 // Buzzer
 #define BUZZER_DEFAULT_FREQ_HZ       2000U    // passive buzzer tone frequency (Hz)
-#define BUZZER_DURATION_MS          60000UL   // auto-silence after 60 s (alarm state unchanged)
+#define BUZZER_DURATION_MS          60000UL   // auto-cancel alarm after 60 s (calls _cancelAlarm)
 #define BUZZER_TEST_DURATION_MS       500UL   // test beep length

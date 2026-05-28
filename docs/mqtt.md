@@ -31,7 +31,7 @@ Agent 1 (ESP32 NMK99)           MQTT Broker              Agent 2 (室內 Agent)
 
 ## Broker 設定
 
-MQTT Broker 資訊儲存於 NVS，透過 WebUI `/settings/system` 設定：
+MQTT Broker 資訊儲存於 NVS，透過 WebUI `/settings` 設定：
 
 | 設定項目 | NVS Key | 預設值 |
 |---------|---------|-------|

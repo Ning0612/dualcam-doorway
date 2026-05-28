@@ -18,7 +18,7 @@
 | 元件 | 型號/規格 | 說明 |
 |------|----------|------|
 | 主控板 | ESP32 NMK99 | AI Thinker ESP32-CAM 相容，內建 PSRAM |
-| 相機模組 | OV2640 | FPC 排線接 NMK99，QQVGA 模式 |
+| 相機模組 | OV2640 | FPC 排線接 NMK99，QVGA 320×240 模式 |
 | RGB LED | WS2812B（單顆） | 可定址 NeoPixel，GRB 像素順序 |
 | 門磁感應器 | 霍爾效應感應器（模組） | 輸出 0–3.3V 類比電壓 |
 | 蜂鳴器 | 壓電式無源蜂鳴器 | 3.3V 直驅 |
@@ -108,14 +108,18 @@ ESP32 GND    ──────────────────► GND（WS2
 
 > 若使用多顆串接，在 VCC 與 GND 之間加 100–470µF 電解電容，防止電源突波。
 
-### 警戒顏色對應
+### LED 顯示優先級
 
-| AlertLevel | LED 狀態 | 說明 |
-|------------|----------|------|
-| `ALERT_GREEN` | 綠色常亮 | 已知使用者 / 正常狀態 |
-| `ALERT_YELLOW` | 黃色常亮 | Agent 2 回報室內有人，協調模式 |
-| `ALERT_RED` | 紅色常亮 | Agent 2 離線或室內無人（預設） |
-| `ALERT_RED` + alarm | 紅色閃爍（250ms） | 偵測到未知訪客，警報觸發 |
+LED 顯示由 `updateLed()`（main.cpp）依優先級合成，與 AlertLevel 不是直接對應：
+
+| 優先級 | 觸發條件 | LED 狀態 |
+|--------|---------|---------|
+| 1（最高） | 警報啟動（`isAlarmActive()`） | 紅色閃爍（250ms） |
+| 2 | `ALERT_GREEN`（已知使用者確認後 60s 內） | 綠色常亮 |
+| 3 | 畫面中偵測到任意人臉 | 白色常亮（fill light） |
+| 4（最低） | 無上述任一條件 | 關閉 |
+
+> `ALERT_YELLOW` 與 idle `ALERT_RED` 不單獨對應固定顏色；LED 依上述優先級決定。
 
 ---
 
@@ -153,17 +157,28 @@ GPIO 33 ────── ┤ ─── 感應器 SIGNAL 輸出
 ```
 
 - 感應器與磁鐵相距 5–20mm 時感應（依模組靈敏度調整）
-- 門關閉：磁鐵靠近感應器 → ADC 值低於閾值 → `DOOR_CLOSED`
-- 門開啟：磁鐵遠離感應器 → ADC 值高於閾值 → `DOOR_OPEN`
+- 門關閉：磁鐵靠近感應器 → ADC 值落在 open zone 之外 → `DOOR_CLOSED`
+- 門開啟：磁鐵遠離感應器 → ADC 值落在 open zone 內側 → `DOOR_OPEN`
 
-### 閾值校準
+### 雙邊界校準
 
-1. 關閉門，在 Serial 輸入 `h` 查看 ADC 原始值
-2. 開啟門，再次查看 ADC 原始值
-3. 計算兩值中間點，輸入 `H` 將當前值儲存為閾值
-4. 或透過 WebUI `/settings/system` 手動設定
+系統使用 open zone（`hall_lo` / `hall_hi`）取代單一閾值，含 hysteresis 死區：
 
-預設閾值：`2048`（12-bit ADC 中點），Hysteresis：±`150`
+```
+OPEN  觸發：ADC > hall_lo + 150 且 ADC < hall_hi - 150（inner band）
+CLOSED 觸發：ADC < hall_lo - 150 或 ADC > hall_hi + 150（outer band 外）
+Dead zone：維持現狀
+```
+
+校準步驟：
+1. 記錄門關閉時的 ADC 值（WebUI `/api/status` 的 `hall_raw` 欄位）
+2. 記錄門完全開啟時的 ADC 值
+3. 透過 WebUI `/settings` 設定：
+   - `hall_lo` = 開門 ADC 值下緣 + HYSTERESIS×2（確保開門時進入 inner band）
+   - `hall_hi` = 開門 ADC 值上緣 - HYSTERESIS×2
+4. 確認關門時 ADC 落在 outer band 外（`< hall_lo - 150` 或 `> hall_hi + 150`）
+
+預設：`hall_lo = 1000`，`hall_hi = 3000`，`HALL_HYSTERESIS = 150`
 
 ---
 

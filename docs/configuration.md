@@ -6,7 +6,6 @@
 - [Config Portal（WiFi 首次設定）](#config-portalwifi-首次設定)
 - [NVS 金鑰總覽](#nvs-金鑰總覽)
 - [WebUI 設定頁面](#webui-設定頁面)
-- [Serial 即時校準](#serial-即時校準)
 - [程式碼常數（config.h）](#程式碼常數configh)
 - [NVS 資料備份與還原](#nvs-資料備份與還原)
 - [重設為出廠預設值](#重設為出廠預設值)
@@ -20,11 +19,11 @@
 | WiFi 憑證 | Config Portal（AP 模式） | 首次設定或憑證遺失時 |
 | Discord Webhook | WebUI `/settings` | 設定通知 URL |
 | MQTT Broker | WebUI `/settings` | Agent 2 通訊設定 |
+| 蜂鳴器頻率/持續時間 | WebUI `/settings` | 警報聲音調整 |
 | Dashboard 密碼 | WebUI `/settings` | 修改登入密碼 |
-| 霍爾感應器閾值 | Serial `H` 鍵 或 WebUI `/settings` | 門磁感應器現場校準 |
-| 人臉辨識閾值 | WebUI `/settings`（預留）| similarity threshold |
-| FaceVoter 參數 | `include/config.h` 重新編譯 | 投票視窗調整 |
-| 計時常數 | `include/config.h` 重新編譯 | 需燒錄新韌體 |
+| 霍爾感應器開閉區間 | WebUI `/settings` | 門磁感應器 lower/upper bounds |
+| FaceVoter / 計時常數 | `include/config.h` 重新編譯 | 需燒錄新韌體 |
+| 人臉辨識閾值 | `include/config.h` 重新編譯 | similarity / margin / texture |
 
 ---
 
@@ -70,77 +69,72 @@
 |---------|---------|------|------|-------|
 | `wifi_ssid` | ConfigPortal | String | WiFi SSID | 空（未設定） |
 | `wifi_pw` | ConfigPortal | String | WiFi 密碼 | 空（未設定） |
-| `dashboard_pw_hash` | SettingsStore | String | SHA-256(salt+pw) hex | 空（未設定，首次登入強制設定） |
+| `dashboard_pw` | SettingsStore | String | salted SHA-256 hex 密碼 | 空（首次登入強制設定） |
+| `pw_changed` | SettingsStore | Bool | 是否已修改過預設密碼 | false |
 | `discord_url` | SettingsStore | String | Discord Webhook URL | 空 |
-| `hall_threshold` | SettingsStore | UInt16 | 霍爾感應器 ADC 閾值 | 2048 |
+| `hall_lo` | SettingsStore | UInt32 | 霍爾感應器 open zone 下界 | 1000 |
+| `hall_hi` | SettingsStore | UInt32 | 霍爾感應器 open zone 上界 | 3000 |
 | `mqtt_broker` | ConfigManager | String | MQTT Broker IP/hostname | 空 |
 | `mqtt_port` | ConfigManager | UInt16 | MQTT Broker port | 1883 |
-| `face_feat` | FaceRecognizer | Blob | 人臉特徵向量（7×32×4 bytes） | 空 |
-| `face_cnt` | FaceRecognizer | UInt8 | 已註冊人臉數量 | 0 |
-| `face_names` | FaceRecognizer | Blob | 使用者名稱陣列 | 空 |
+| `buzzer_freq` | ConfigManager | UInt32 | 蜂鳴器頻率 Hz | 2000 |
+| `buzzer_dur` | ConfigManager | UInt32 | 蜂鳴器持續時間 ms | 60000 |
+| `face_feat` | FaceRecognizer | Blob | 特徵向量（最大 7×5×64×4 = 8960 bytes） | 空 |
+| `face_cnt` | FaceRecognizer | UInt8 | 已註冊使用者數量 | 0 |
+| `face_names` | FaceRecognizer | Blob | 使用者名稱（最大 7×17 = 119 bytes；實際依 enrolled count） | 空 |
+| `face_tcnt` | FaceRecognizer | Blob | 每位使用者模板數（最大 7 bytes；實際依 enrolled count） | 空 |
 
 ---
 
 ## WebUI 設定頁面
 
-### WiFi 設定（`/settings/wifi`）
+所有設定集中在統一的 `/settings` 頁面（`GET /settings`），需登入且已修改預設密碼。
+儲存透過 `POST /settings/save`（含 CSRF token 驗證）。
 
-- **WiFi Scan**：掃描附近 AP，點擊選擇 SSID
-- **手動輸入**：若 AP 隱藏或掃描未列出
-- **送出後**：寫入 NVS → 裝置重啟 → 連線新 WiFi
+### 可設定項目
 
-> 若新 WiFi 設定錯誤，裝置連線失敗後退回 AP 模式。
+| 設定項目 | NVS Key | 說明 |
+|---------|---------|------|
+| Discord Webhook URL | `discord_url` | 必須以 `https://discord.com/api/webhooks/` 或 `https://discordapp.com/api/webhooks/` 開頭；清空 = 停用 |
+| MQTT Broker | `mqtt_broker` | IP 或 hostname；最多 63 字元；空值 = 停用 MQTT |
+| MQTT Port | `mqtt_port` | 1–65535；預設 1883 |
+| 霍爾感應器下界 | `hall_lo` | open zone 下界（ADC 0–4095）；預設 1000 |
+| 霍爾感應器上界 | `hall_hi` | open zone 上界（ADC 0–4095）；預設 3000 |
+| 蜂鳴器頻率 | `buzzer_freq` | 200–8000 Hz；WebUI 輸入 Hz，直接存 NVS |
+| 蜂鳴器持續時間 | `buzzer_dur` | WebUI 輸入秒（10–300 s），存 NVS 時轉為毫秒 |
+| Dashboard 密碼 | `dashboard_pw` | 新密碼（需輸入兩次確認） |
 
-### Discord 設定（`/settings/discord`）
+> WiFi 設定**不**在 WebUI，只能透過 Config Portal（AP 模式）設定。
 
-URL 格式驗證：
-- 必須以 `https://discord.com/api/webhooks/` 或 `https://discordapp.com/api/webhooks/` 開頭
-- 長度 ≤ 256 字元
-- 清空送出 → 清除 Discord 通知
+### 霍爾感應器雙邊界說明
 
-### 系統設定（`/settings/system`）
-
-| 設定項目 | 說明 | 限制 |
-|---------|------|------|
-| MQTT Broker | IP 或 hostname | 最多 64 字元；空值 = 停用 MQTT |
-| MQTT Port | 埠號 | 1–65535；預設 1883 |
-| 霍爾閾值 | ADC 12-bit 閾值 | 0–4095（需考慮 Hysteresis ±150） |
-| Face Similarity | Cosine similarity 閾值 | 0.80–1.00；建議 0.92 |
-| Dashboard 密碼 | 新密碼（需輸入兩次） | 8–64 字元 |
-
----
-
-## Serial 即時校準
-
-無需重新燒錄即可調整霍爾感應器閾值：
-
-### 校準步驟
+霍爾感應器以 **open zone**（開啟區間 `[hall_lo, hall_hi]`）取代單一閾值，
+加上 hysteresis 死區防止邊界震盪：
 
 ```
-1. 確保門關閉，Serial 輸入 'h'
-   → 輸出: [Agent1] Hall raw=850  threshold=2048  hysteresis=±150  door=CLOSED
+OPEN  觸發（進入 inner band）：
+  raw > hall_lo + HYSTERESIS(150) 且 raw < hall_hi - HYSTERESIS(150)
 
-2. 開啟門，再次輸入 'h'
-   → 輸出: [Agent1] Hall raw=3100  threshold=2048  hysteresis=±150  door=OPEN
+CLOSED 觸發（超出 outer band）：
+  raw < hall_lo - HYSTERESIS(150)  或  raw > hall_hi + HYSTERESIS(150)
 
-3. 半開門（閾值中間點），輸入 'H'
-   → 系統將當前 raw 值儲存為新閾值
-
-# 驗證
-4. 輸入 'h' 確認新閾值已套用
+Dead zone（維持現狀）：
+  在 inner/outer band 之間的模糊區間
 ```
 
-### 閾值計算建議
-
+範例（hall_lo=1000, hall_hi=3000, HYSTERESIS=150）：
 ```
-關閉時 ADC ≈ 850
-開啟時 ADC ≈ 3100
-建議閾值 = (850 + 3100) / 2 = 1975
-
-Hysteresis = ±150:
-  → OPEN  觸發點: 1975 + 150 = 2125（ADC 超過此值 → DOOR_OPEN）
-  → CLOSE 觸發點: 1975 - 150 = 1825（ADC 低於此值 → DOOR_CLOSED）
+raw < 850          → DOOR_CLOSED（outer band 外側）
+850 ≤ raw ≤ 1150   → Dead zone（維持現狀）
+1150 < raw < 2850  → DOOR_OPEN（inner band 內側）
+2850 ≤ raw ≤ 3150  → Dead zone（維持現狀）
+raw > 3150         → DOOR_CLOSED（outer band 外側）
 ```
+
+校準建議：
+1. 記錄門關閉時的 ADC raw 值（`/api/status` 的 `hall_raw`）
+2. 記錄門完全開啟時的 ADC raw 值
+3. 設定 `hall_lo` ≈ 開門值下緣 + HYSTERESIS×2，`hall_hi` ≈ 開門值上緣 - HYSTERESIS×2
+4. 確保門關閉時 ADC 落在 outer band 之外（`< hall_lo - 150` 或 `> hall_hi + 150`）
 
 ---
 
@@ -148,21 +142,12 @@ Hysteresis = ±150:
 
 以下常數需修改 `include/config.h` 後重新編譯燒錄：
 
-### 網路 / mDNS / HTTP
-
-```cpp
-#define MDNS_AGENT1        "agent1"    // mDNS 主機名稱 → agent1.local
-#define MDNS_AGENT2        "agent2"    // Agent 2 mDNS → agent2.local
-#define HTTP_PORT          80          // Dashboard HTTP port
-#define PEER_QUERY_INTERVAL_MS  5000UL // 舊版 HTTP fallback 輪詢間隔（保留）
-```
-
 ### WiFi / 連線
 
 ```cpp
-#define WIFI_CONNECT_TIMEOUT_MS  15000UL   // STA 連線嘗試逾時（ms）
+#define WIFI_CONNECT_TIMEOUT_MS  15000UL   // STA 連線嘗試逾時
 #define PORTAL_TIMEOUT_MS       300000UL   // AP 模式無操作逾時（5分鐘）
-#define WIFI_LOST_TIMEOUT_MS    300000UL   // loop() 中持續斷線 → restart（5分鐘）
+#define WIFI_LOST_TIMEOUT_MS    300000UL   // 持續斷線 → restart（5分鐘）
 ```
 
 ### MQTT
@@ -177,8 +162,9 @@ Hysteresis = ±150:
 ### 霍爾感應器
 
 ```cpp
-#define HALL_DEFAULT_THRESHOLD    2048     // 預設 ADC 閾值
-#define HALL_HYSTERESIS            150     // 死區寬度（±各側）
+#define HALL_DEFAULT_LOWER        1000     // open zone 下界預設
+#define HALL_DEFAULT_UPPER        3000     // open zone 上界預設
+#define HALL_HYSTERESIS            150     // 死區半寬（各邊界各側）
 #define HALL_SAMPLE_INTERVAL_MS     50UL   // ADC 採樣頻率
 #define DOOR_DEBOUNCE_MS           200UL   // 狀態穩定確認時間
 ```
@@ -191,14 +177,15 @@ Hysteresis = ±150:
 #define FACE_RECENT_MS           10000UL   // 視為「當前有臉」的時間窗口
 ```
 
-### 人臉辨識（也可透過 WebUI 調整）
+### 人臉辨識
 
 ```cpp
-#define FACE_SIMILARITY_THRESHOLD  0.92f   // KNOWN 判定閾值
-#define FACE_TEXTURE_MIN_STDDEV   20.0f    // 最低紋理分數
+#define FACE_SIMILARITY_THRESHOLD  0.90f   // KNOWN 判定 cosine similarity 閾值
+#define FACE_MARGIN_MIN            0.03f   // 最高/次高分差（防近似人臉混淆）
+#define FACE_TEXTURE_MIN_STDDEV   12.0f    // mean L1 gradient per pixel 最低值
 ```
 
-### FaceVoter（也可透過 WebUI 調整）
+### FaceVoter
 
 ```cpp
 #define FACE_VOTE_WINDOW_MS          10000UL  // UNKNOWN_CONFIRMED 最短持續時間
@@ -208,10 +195,18 @@ Hysteresis = ±150:
 #define FACE_VOTE_UNKNOWN_MIN_HITS       10   // UNKNOWN_CONFIRMED 最少 frame 數
 ```
 
+### 蜂鳴器
+
+```cpp
+#define BUZZER_DEFAULT_FREQ_HZ    2000U    // 被動壓電式蜂鳴器頻率（Hz）
+#define BUZZER_DURATION_MS       60000UL   // 警報蜂鳴器自動取消時間（呼叫 _cancelAlarm）
+#define BUZZER_TEST_DURATION_MS    500UL   // 測試嗶聲持續時間
+```
+
 ### Discord
 
 ```cpp
-#define DISCORD_RATE_LIMIT_MS    30000UL    // 同事件最短間隔（30秒）
+#define DISCORD_RATE_LIMIT_MS    30000UL    // 同 AlertEvent 最短間隔（30秒）
 #define DISCORD_TIMEOUT_MS        5000UL    // 連線 + 讀取逾時
 #define DISCORD_FAIL_COOLDOWN_MS 300000UL   // 連線失敗後 cooldown（5分鐘）
 ```
@@ -232,7 +227,8 @@ NVS 資料目前無自動備份機制。若需保留設定（例如韌體更新�
 
 - MQTT Broker IP 與 Port
 - Discord Webhook URL
-- 霍爾感應器閾值
+- 霍爾感應器 hall_lo / hall_hi
+- 蜂鳴器頻率 / 持續時間
 - Dashboard 密碼（記錄明文，重新設定）
 - 人臉特徵無法匯出（需重新註冊）
 
@@ -253,12 +249,10 @@ Serial 輸入: W
 ### 清除所有人臉資料
 
 ```
-Serial 輸入: r
-→ 清除 NVS face_feat, face_cnt, face_names
-→ FaceVoter 重置
-
-# 或透過 WebUI
-POST /api/face/clear（需 session）
+# 透過 WebUI（需 session + CSRF）
+POST /api/face/clear
+→ face_cnt = 0，face_feat / face_tcnt / face_names 從 NVS 移除
+→ _n = 0，所有比對回傳 NO_FACE，直到重新 enroll
 ```
 
 ### 完整 NVS 清除（完全重設）

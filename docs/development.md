@@ -134,10 +134,10 @@ ls /dev/ttyUSB*
 [Agent1] WiFi connected. IP: 192.168.1.100  MAC: AA:BB:CC:DD:EE:FF
 [Agent1] mDNS: agent1.local
 [Agent1] NTP sync OK
-[Agent1] Hall threshold: 2048
+[Agent1] Hall bounds: lo=1000 hi=3000
 [Agent1] HTTP server on port 80
 [Agent1] ready
-[Agent1]   h=Hall value  H=save threshold  d=door toggle
+[Agent1]   h=Hall value  H=auto-calibrate bounds  d=door toggle
 [Agent1]   u=unknown     e=enroll face     r=clear faces
 [Agent1]   n=face count  c=camera status   s=full status
 [Agent1]   W=clear WiFi credentials
@@ -151,8 +151,8 @@ ls /dev/ttyUSB*
 
 | 按鍵 | 功能 |
 |------|------|
-| `h` | 印出霍爾感應器當前原始 ADC 值與設定閾值 |
-| `H` | 將當前 ADC 值儲存為新閾值（用於現場校準） |
+| `h` | 印出霍爾感應器當前 raw、lo/hi 邊界、hysteresis、門狀態 |
+| `H` | 自動校準（門關閉、磁鐵吸附時按下）：依偏移方向更新 lo 或 hi，偏移量 = raw ± 2×HYSTERESIS |
 | `d` | 手動切換門狀態（OPEN ↔ CLOSED），無需硬體 |
 | `u` | 手動觸發「未知訪客 CONFIRMED」（測試警報流程） |
 | `e` | 排程下一張臉為人臉註冊（10 秒視窗） |
@@ -225,7 +225,7 @@ build_flags = -I include -D AGENT1
 
 ### Q: MQTT 未連線
 
-**A:** 確認 `mqtt_broker` NVS 已設定（透過 WebUI `/settings/system`），Broker IP 可從 Agent 1 所在網路存取，port 1883 已開放。
+**A:** 確認 `mqtt_broker` NVS 已設定（透過 WebUI `/settings`），Broker IP 可從 Agent 1 所在網路存取，port 1883 已開放。
 
 ### Q: 編譯出現 `DISCORD_ROOT_CA_CERT` 或 `DISCORD_TLS_INSECURE` 錯誤
 

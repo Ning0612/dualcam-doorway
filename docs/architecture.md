@@ -74,7 +74,10 @@ loop() 每次迭代：
 6. CameraAgent::tick()          每 500ms 執行一次人臉偵測
    └── FaceRecognizer::recognize()  → _lastResult, _lastRunMs
 
-7. FaceVoter::update(lastRawResult, lastRawResultMs, now)
+7. 若 _lastResult == FACE_KNOWN（raw）：
+   sm.onFaceKnownRaw(name)    更新 _lastSeenKnownName（門歸因 fallback 用）
+
+8. FaceVoter::update(lastRawResult, lastRawResultMs, now)
    ├── KNOWN_CONFIRMED  → faceVoter.setConfirmedName(FaceRecognizer::getLastMatchName())
    │                    → sm.onVoteResult(KNOWN_CONFIRMED, name, sim)
    │                       └── SecurityStateMachine 觸發 onKnownConfirmed callback
@@ -82,11 +85,15 @@ loop() 每次迭代：
                             └── SecurityStateMachine 觸發 onAlert callback
                             注意：持續存在的未知訪客每 FACE_VOTE_WINDOW_MS（10s）重新觸發一次
 
-8. 每 30s：AgentComm::publishStatus(alertLevel, uptime)
+9. updateLed()                  LED 優先級合成（alarm > GREEN > face detected > off）
 
-9. sm.tick()                    決策逾時處理（Yellow alert decision timeout）
-10. handleWifiLoss()            WiFi 斷線監控
-11. handleSerialInput()         Serial 指令處理
+10. BuzzerController::tick()    蜂鳴器計時，到期呼叫 _cancelAlarm()
+
+11. 每 30s：AgentComm::publishStatus(alertLevel, uptime)
+
+12. sm.tick()                   決策逾時處理（Yellow alert decision timeout）
+13. handleWifiLoss()            WiFi 斷線監控
+14. handleSerialInput()         Serial 指令處理
 ```
 
 ---
@@ -108,18 +115,22 @@ loop() 每次迭代：
 
 | NVS Key | 型別 | 說明 |
 |---------|------|------|
-| `dashboard_pw_hash` | String | salted SHA-256 hex，dashboard 登入密碼 |
+| `dashboard_pw` | String | salted SHA-256 hex，dashboard 登入密碼 |
+| `pw_changed` | Bool | 是否已修改過預設密碼 |
 | `discord_url` | String | Discord Webhook URL |
-| `hall_threshold` | UInt16 | 霍爾感應器 ADC 閾值 |
+| `hall_lo` | UInt32 | 霍爾感應器 open zone 下界；預設 1000 |
+| `hall_hi` | UInt32 | 霍爾感應器 open zone 上界；預設 3000 |
 
 ### ConfigManager
 
-管理 MQTT 連線設定：
+管理 MQTT 連線與蜂鳴器設定：
 
 | NVS Key | 型別 | 說明 |
 |---------|------|------|
 | `mqtt_broker` | String | MQTT Broker IP/hostname |
 | `mqtt_port` | UInt16 | 預設 1883 |
+| `buzzer_freq` | UInt32 | 蜂鳴器頻率 Hz；預設 2000 |
+| `buzzer_dur` | UInt32 | 蜂鳴器持續時間 ms；預設 60000 |
 
 ### DoorSensor
 
@@ -155,14 +166,14 @@ loop() 每次迭代：
 ### DiscordNotifier
 
 - TLS 連線（開發環境用 `setInsecure()`，生產環境需設定 CA 憑證）
-- URL 白名單驗證（只允許 `https://discord.com/api/webhooks/` 開頭）
+- URL 白名單驗證（允許 `https://discord.com/api/webhooks/` 或 `https://discordapp.com/api/webhooks/` 開頭）
 - 每種 AlertEvent 獨立 rate limiting（同事件最少 30s 間隔）
 - 連線失敗後進入 5 分鐘 cooldown
 - `notifyBoot()` 不影響 rate limit，確保開機通知不阻礙後續警報
 
 ### CameraAgent
 
-- `begin()`：初始化 OV2640 Camera（QQVGA, YUV422, PSRAM 模式）
+- `begin()`：初始化 OV2640 Camera（QVGA 320×240, YUV422, PSRAM 模式）
 - `tick()`：每 500ms 執行一次，呼叫 `FaceRecognizer::recognize()`，儲存結果
 - `scheduleEnroll(name)`：排程下一次偵測為人臉註冊，10s 逾時自動取消
 - MJPEG stream：獨立 FreeRTOS task，port 81，每個連線一個 frame
@@ -177,10 +188,13 @@ loop() 每次迭代：
 
 ### LogManager
 
-- 三個獨立環形緩衝區（Face Log, Door Log, Alert Log），各最多 50 筆
-- 超出時覆蓋最舊的記錄
+- **RAM ring buffer**：三個獨立環形緩衝區（Face/Door/Alert Log），各最多 50 筆，超出時覆蓋最舊記錄
+- **SPIFFS 持久化**（需呼叫 `beginSpiffs()` 啟用）：月份分檔 NDJSON（`/face_YYYYMM.ndjson`、`/door_YYYYMM.ndjson`、`/alert_YYYYMM.ndjson`，根目錄）；NTP 未同步時略過寫入
 - NTP 同步時用 `time()` 取得 ISO 8601 timestamp；未同步時用 millis() 相對時間
-- `getFaceLogJson()` / `getDoorLogJson()` / `getAlertLogJson()` 回傳 JSON 陣列
+- 即時查詢 API：`getFaceLogJson()` / `getDoorLogJson()` / `getAlertLogJson()`（RAM ring，最近 50 筆）
+- 分頁歷史 API：`getFaceLogPagedJson(month, page, perPage)` 等（SPIFFS，`{total, page, per_page, data[]}`）
+- 統計 API：`getStatsJson(month)` — today/week/month count、daily_week[7]、door duration、leaderboard 等
+- 月份列表：`getAvailableMonthsJson()` — 已有資料月份（降序）
 
 ### SessionAuth
 
@@ -194,7 +208,7 @@ loop() 每次迭代：
 
 - 所有 HTML 儲存於 PROGMEM `const char[]`（無 LittleFS）
 - 每頁 HTML < 6KB（含 inline CSS + JS）
-- `/api/status` 使用 `StaticJsonDocument<512>`
+- `/api/status` 使用動態 `JsonDocument`（非固定大小）
 - 3 秒 AJAX 輪詢更新 Dashboard
 
 ---
@@ -213,7 +227,7 @@ AlertLevel _recalcAlertLevel():
 
   if (_occupied && _agent2Online):
       if (_knownConfirmed && !expired):
-          return ALERT_GREEN  ← 已知使用者，短暫綠燈
+          return ALERT_GREEN  ← 已知使用者，60s 綠燈窗口
       return ALERT_YELLOW     ← 協調模式
 ```
 
@@ -222,25 +236,25 @@ AlertLevel _recalcAlertLevel():
 | Agent 2 離線 | `ALERT_RED` |
 | presence = UNOCCUPIED | `ALERT_RED` |
 | presence = OCCUPIED | `ALERT_YELLOW` |
-| KNOWN_CONFIRMED（15s 內） | `ALERT_GREEN` |
+| KNOWN_CONFIRMED（`KNOWN_GREEN_DURATION_MS` = 60s 窗口內） | `ALERT_GREEN` |
 
 ### 未知訪客處理流程
 
 ```
 onVoteResult(UNKNOWN_CONFIRMED)
   ├─ AlertLevel = RED:
-  │    LedController::setBlinking(true)
-  │    BuzzerController::trigger()
-  │    DiscordNotifier::notify(UNKNOWN_VISITOR)
-  │    LogManager::logAlert(RED, "UNKNOWN_CONFIRMED", TRIGGER_ALARM)
+  │    _triggerAlarm()  （SSM 內部狀態改變）
+  │    → 觸發 onAlert callback（main.cpp 負責呼叫 BuzzerController、LedController、
+  │                              DiscordNotifier::notifyWithPhoto、LogManager）
   │
   └─ AlertLevel = YELLOW:
-       AgentComm::publishAlert(YELLOW, "UNKNOWN_CONFIRMED")
        _waitingForDecision = true
        _decisionStartMs = now
-       LogManager::logAlert(YELLOW, "UNKNOWN_CONFIRMED", NO_ACTION)
+       → 觸發 onAlert callback（main.cpp 負責 MQTT publishAlert、LogManager）
        
-       30s 後無 AlarmDecision → 自動觸發 TRIGGER_ALARM
+       30s 後無 AlarmDecision → sm.tick() 呼叫 _triggerAlarm()
+
+注意：SSM 本身不直接操控硬體或網路；所有外部副作用均透過 callback 由 main.cpp 執行。
 ```
 
 ### Yellow Alert 決策逾時
@@ -255,11 +269,13 @@ sm.tick():
 
 ```
 onAlarmDecision(CANCEL_ALARM):
+  _waitingForDecision = false  ← 即使無 active alarm 也清除等待狀態
   if (_alarmActive):
-      BuzzerController::cancel()
-      LedController::setBlinking(false)
-      LedController::setLevel(getAlertLevel())
-      _onAlarmCancelled()
+      _cancelAlarm()
+        → 觸發 _onBuzzerSilence callback（main.cpp 停止蜂鳴器）
+        → 觸發 _onAlarmCancelled callback（main.cpp 更新 LED、記錄 log）
+
+注意：SSM 不直接操作 BuzzerController / LedController；所有硬體操作均透過 callback。
 ```
 
 ---
@@ -321,7 +337,8 @@ timeline:
 sm.setOnAlert(onAlert);                   // 未知訪客警報觸發
 sm.setOnDoorEvent(onDoorEvent);           // 門狀態確認改變
 sm.setOnKnownConfirmed(onKnownConfirmed); // 已知使用者確認
-sm.setOnAlarmCancelled(onAlarmCancelled); // 警報被 Agent 2 取消
+sm.setOnAlarmCancelled(onAlarmCancelled); // 警報取消（Agent 2 或自動）
+sm.setOnBuzzerSilence(onBuzzerSilence);   // 蜂鳴器靜音（先於 onAlarmCancelled 觸發）
 
 // AgentComm callbacks
 AgentComm::setOnPresence(onPresence);              // MQTT presence 訊息
@@ -353,10 +370,11 @@ FaceRecognizer::setOnClearCallback([]{ faceVoter.reset(); });
 
 | 資源 | 大小 | 說明 |
 |------|------|------|
-| PSRAM | ~4MB | YUV422 Camera frame（QQVGA = 160×120×2 = 38.4KB/frame） |
+| PSRAM | ~4MB | YUV422 Camera frame（QVGA 320×240×2 = 153.6KB/frame × 2 buffer） |
 | DRAM Heap | ~200KB | Arduino heap（FreeRTOS 動態配置） |
 | PROGMEM | ~30KB | HTML templates（DashboardServer） |
-| NVS | < 4KB | 設定資料（wifi_ssid, discord_url, face_feat 等） |
-| Face Bank | 7 × 32 × 4 = 896 bytes | 7 位使用者特徵向量（float32） |
-| Log Buffers | 50 × 3 × ~100B ≈ 15KB | Face/Door/Alert ring buffer |
-| `StaticJsonDocument<512>` | 512 bytes | `/api/status` JSON |
+| NVS | < 15KB | 設定資料（face_feat 最大 8960B + 其餘設定） |
+| Face Bank（RAM） | 最大 7×5×64×4 = 8960 bytes | 7 users × 5 templates × 64-float（float32） |
+| Log Buffers（RAM） | 50 × 3 × ~100B ≈ 15KB | Face/Door/Alert ring buffer |
+| SPIFFS logs | 依月份而定 | 月份分檔 NDJSON；每筆約 100–200 bytes |
+| `JsonDocument`（動態） | 依需求 | `/api/status` JSON（非固定大小） |

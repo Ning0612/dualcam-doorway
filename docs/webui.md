@@ -32,20 +32,27 @@
 | `/login` | — | — | 登入表單 |
 | `/logout` | session | — | 登出，清除 session |
 | `/dashboard` | session + 需改密碼 | — | 即時狀態（3s AJAX 輪詢）+ 人臉管理 |
-| `/settings` | session + 需改密碼 | POST 需驗證 | 統一設定頁（Discord、MQTT、霍爾閾值、密碼） |
+| `/settings` | session + 需改密碼 | POST 需驗證 | 統一設定頁（Discord、MQTT、霍爾雙邊界、蜂鳴器、密碼） |
 | `/settings/save` | session + 需改密碼 | POST 需驗證 | 儲存設定（表單 action） |
-| `/password/change` | session | POST 需驗證 | 首次登入強制密碼修改頁 |
+| `/password/change` | session | — | 首次登入強制密碼修改頁 |
 | `/password/save` | session | POST 需驗證 | 儲存新密碼 |
-| `/log/door` | session + 需改密碼 | — | 門禁紀錄（最近 50 筆） |
-| `/log/face` | session + 需改密碼 | — | 人臉辨識紀錄（最近 50 筆） |
-| `/log/alert` | session + 需改密碼 | — | 警戒事件紀錄（最近 50 筆） |
+| `/log/door` | session + 需改密碼 | — | 門禁紀錄（RAM 最近 50 筆 + SPIFFS 月份切換） |
+| `/log/face` | session + 需改密碼 | — | 人臉辨識紀錄（RAM 最近 50 筆 + SPIFFS 月份切換） |
+| `/log/alert` | session + 需改密碼 | — | 警戒事件紀錄（RAM 最近 50 筆 + SPIFFS 月份切換） |
+| `/analytics` | session + 需改密碼 | — | 統計分析頁面（門次、人臉排行、峰值時段） |
 | `/api/status` | session + 需改密碼 | — | JSON 即時狀態（詳見下方） |
 | `/api/face/enroll` | session + 需改密碼 | POST 需驗證 | 觸發人臉註冊 API |
 | `/api/face/list` | session + 需改密碼 | — | 列出已註冊人臉名稱 |
 | `/api/face/clear` | session + 需改密碼 | POST 需驗證 | 清除所有人臉資料 API |
-| `/api/log/door` | session + 需改密碼 | — | 門禁紀錄 JSON |
+| `/api/log/door` | session + 需改密碼 | — | 門禁紀錄 JSON（RAM 最近 50 筆） |
 | `/api/log/face` | session + 需改密碼 | — | 人臉辨識紀錄 JSON |
 | `/api/log/alert` | session + 需改密碼 | — | 警戒事件紀錄 JSON |
+| `/api/log/door/paged` | session + 需改密碼 | — | SPIFFS 分頁（?month=YYYYMM&page=N&per_page=20） |
+| `/api/log/face/paged` | session + 需改密碼 | — | SPIFFS 分頁 |
+| `/api/log/alert/paged` | session + 需改密碼 | — | SPIFFS 分頁 |
+| `/api/log/stats` | session + 需改密碼 | — | 月份統計 JSON（?month=YYYYMM） |
+| `/api/log/months` | session + 需改密碼 | — | 有資料月份列表 JSON |
+| `/api/buzzer/test` | session | POST 需驗證 | 測試蜂鳴器（form body `freq` 可選） |
 
 > **WiFi 設定**：Dashboard 不提供 WiFi 修改頁面。WiFi 憑證只能透過 Config Portal（AP 模式）設定。若需變更 WiFi，透過 Serial 輸入 `W` 清除憑證並重啟，裝置會進入 AP 模式。
 
@@ -68,7 +75,7 @@ Set-Cookie: sid=<16-byte-random-hex>; HttpOnly; Path=/; SameSite=Lax
 
 ### 密碼儲存
 
-- 密碼以 `salted-SHA-256` hash 儲存於 NVS `dashboard_pw_hash`
+- 密碼以 `salted-SHA-256` hash 儲存於 NVS `dashboard_pw`
 - 首次登入必須修改預設密碼（`hasDefaultPassword()` 回傳 true 時強制跳轉）
 
 ---
@@ -101,7 +108,10 @@ Set-Cookie: sid=<16-byte-random-hex>; HttpOnly; Path=/; SameSite=Lax
 | Discord Webhook URL | Discord 通知 Webhook | 需以 `https://discord.com/api/webhooks/` 或 `https://discordapp.com/api/webhooks/` 開頭；最多 256 字元；清空 = 停用 |
 | MQTT Broker | IP 或 hostname | 最多 63 字元；空值 = 停用 MQTT |
 | MQTT Port | 埠號 | 1–65535；預設 1883 |
-| 霍爾閾值 | ADC 12-bit 閾值 | 0–4095（需考慮 Hysteresis ±150） |
+| 霍爾 Open Zone 下界（hall_lower） | ADC open zone 下界 | 0–4095；OPEN 觸發：raw > hall_lower + 150 |
+| 霍爾 Open Zone 上界（hall_upper） | ADC open zone 上界 | 0–4095；OPEN 觸發：raw < hall_upper - 150 |
+| 蜂鳴器頻率（Hz） | 警報音頻率 | 200–8000；預設 2000 |
+| 蜂鳴器持續時間（秒） | 警報蜂鳴持續時間 | 10–300 秒；儲存為 ms；預設 60 |
 | Dashboard 密碼 | 新密碼（需輸入兩次） | 8–64 字元；空白不更新 |
 
 > WiFi SSID / 密碼**不**在此設定。WiFi 憑證只能透過 Config Portal（AP 模式）設定。若需變更 WiFi，透過 Serial 輸入 `W` 清除憑證並重啟。
@@ -116,9 +126,9 @@ Dashboard 整合 Camera 預覽（port 81 MJPEG stream）與人臉管理，每 3 
 
 ### 日誌頁面
 
-- `/log/face`、`/log/door`、`/log/alert` 各顯示最近 50 筆記錄
-- 資料從 `/api/log/face`、`/api/log/door`、`/api/log/alert` 動態載入
-- 格式：動態產生表格，含 timestamp、事件類型、相關資訊
+- `/log/face`、`/log/door`、`/log/alert` 各顯示 RAM 最近 50 筆記錄
+- 支援 SPIFFS 月份切換：選擇月份後透過 `/api/log/*/paged` 分頁載入歷史記錄
+- 資料格式：動態產生表格，含 timestamp、事件類型、相關資訊
 - 頁面刷新顯示最新記錄（無自動輪詢）
 
 ---
@@ -138,9 +148,11 @@ Dashboard 整合 Camera 預覽（port 81 MJPEG stream）與人臉管理，每 3 
   "agent2_online": false,
   "alarm_active": false,
   "last_known_user": "",
+  "presence_state": "",
   "uptime": 12345,
   "hall_raw": 850,
-  "hall_threshold": 2048,
+  "hall_lower": 1000,
+  "hall_upper": 3000,
   "face_count": 2,
   "face_max": 7,
   "face_result": "NONE",
@@ -164,23 +176,16 @@ Dashboard 整合 Camera 預覽（port 81 MJPEG stream）與人臉管理，每 3 
 
 需要 session 認證。觸發人臉註冊模式。
 
-**Request Body（JSON）：**
-
-```json
-{
-  "name": "Alice"
-}
-```
-
-| 欄位 | 型別 | 說明 |
-|------|------|------|
-| `name` | String | 使用者名稱，最多 16 字元。選填，空白則匿名。 |
-
 **Request Body（form-urlencoded）：**
 
 ```
 csrf=<csrf-token>&name=Alice
 ```
+
+| 欄位 | 說明 |
+|------|------|
+| `csrf` | CSRF token（必填） |
+| `name` | 使用者名稱，最多 16 字元，僅接受 ASCII 32–126；選填，空白則匿名 |
 
 **Response（HTTP 200）：**
 
@@ -239,6 +244,72 @@ csrf=<csrf-token>
 ```json
 {"cleared": false, "error": "NVS write failed"}
 ```
+
+### GET `/api/log/door` / `/api/log/face` / `/api/log/alert`
+
+需要 session 認證。回傳 RAM 環形緩衝區最近 50 筆記錄 JSON。
+
+**Response（HTTP 200）：**
+
+```json
+[
+  {"timestamp": "2025-12-20T18:30:05+08:00", "door_state": "DOOR_OPEN", "related_user": "Alice"},
+  ...
+]
+```
+
+### GET `/api/log/door/paged` / `/api/log/face/paged` / `/api/log/alert/paged`
+
+需要 session 認證。從 SPIFFS 讀取指定月份的分頁紀錄。
+
+**Query Parameters：**
+
+| 參數 | 說明 | 預設 |
+|------|------|------|
+| `month` | 月份（YYYYMM 數字） | 當前月份 |
+| `page` | 頁碼（1 起） | 1 |
+| `per_page` | 每頁筆數（1–50） | 20 |
+
+**Response（HTTP 200）：**
+
+```json
+{"total": 150, "page": 1, "per_page": 20, "data": [...]}
+```
+
+### GET `/api/log/stats`
+
+需要 session 認證。回傳指定月份的統計摘要（含每日分布、峰值時段、人臉排行榜）。
+
+**Query Parameters：** `?month=YYYYMM`（省略則為當前月份）
+
+### GET `/api/log/months`
+
+需要 session 認證。回傳 SPIFFS 上有資料的月份列表（降序）。
+
+**Response（HTTP 200）：**（bare JSON array）
+
+```json
+[202512, 202511, 202510]
+```
+
+### POST `/api/buzzer/test`
+
+需要 session 認證（不需 `需改密碼`）。發出一聲測試嗶聲。警報啟動中拒絕執行（HTTP 409）。
+
+**Request Body（form-urlencoded）：**
+
+```
+csrf=<csrf-token>&freq=2000
+```
+
+| 欄位 | 說明 |
+|------|------|
+| `csrf` | CSRF token（必填） |
+| `freq` | 頻率 Hz，選填；200–8000；省略則使用 NVS 設定值 |
+
+**Response（HTTP 200）：** `OK`
+
+**Response（HTTP 409）：** `Alarm active`（警報進行中）
 
 ---
 

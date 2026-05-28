@@ -1,236 +1,156 @@
 # Repository Guidelines
 
-## Project Background
+## Project Overview
 
-This repository implements the DualCam Smart Doorway Agent System. The system uses two independent NMK99 ESP32 camera boards with OV2640 cameras:
+This repository implements **Agent 1: ESP32 Smart Doorway Security System** — a single-board embedded system on ESP32 NMK99 + OV2640 camera. The primary goal is a standalone doorway security agent with optional coordination with a separate Agent 2 (indoor presence agent) via MQTT.
 
-- Indoor Agent: camera, mandatory door sensor, LED, buzzer, local home-state logic.
-- Outdoor Agent: camera, LED, buzzer, visitor detection, unknown visitor alert.
+> **Single environment**: this is a single-agent PlatformIO project. There is only one build environment (`agent1`). There are no `indoor`/`outdoor` environments.
 
-The goal is to demonstrate bidirectional smart-agent cooperation: detecting entry/exit direction, identifying unknown visitor situations, and maintaining shared doorway state. The core feature is agent cooperation and state-machine behavior, not AI recognition accuracy. Favor a stable demo over complex recognition logic.
+---
 
-## Project Structure & Module Organization
+## PlatformIO Build Commands
 
-Target structure:
+`pio` is not in PATH on Windows. Use the full path:
 
-```text
-include/
-  config.h      # Wi-Fi, fixed IPs, timing constants
-  states.h      # SystemState enum, StateEvent struct
-  messages.h    # JSON keys and message names
-  pins.h        # GPIO assignments
-lib/
-  AgentProtocol/      # HTTP REST, JSON encode/decode, protocol helpers
-  DoorStateMachine/   # centralized state transition logic; emits StateEvent
-  ConfigPortal/       # AP mode, config web server, NVS wifi_ssid/wifi_pw only
-  SettingsStore/      # NVS dashboard_pw_hash + discord_url; validation + whitelist
-  DashboardServer/    # HTTP dashboard/api/settings routes; PROGMEM HTML
-  SessionAuth/        # session token, cookie, TTL, CSRF, brute-force throttle
-  DiscordNotifier/    # HTTPS webhook send, TLS, rate limit, failure cooldown
-src/
-  indoor_main.cpp     # indoor-specific setup/loop orchestration; StateEvent → DiscordNotifier
-  outdoor_main.cpp    # outdoor-specific setup/loop orchestration; StateEvent → DiscordNotifier
-test/                 # PlatformIO tests
+```powershell
+# Build
+& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run -e agent1
+
+# Flash (replace COM3 with actual port)
+& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run -e agent1 -t upload --upload-port COM3
+
+# Serial monitor
+& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" device monitor --port COM3
 ```
 
-Keep shared behavior in `include/` and `lib/`. Keep agent-specific wiring, setup, and high-level loop calls in the matching `src/*_main.cpp`.
-
-Each agent owns its own sense-compute-actuate loop and must continue making local decisions if the peer is offline. Peer communication shares state and confirms cooperation; it must not be required for local sensing, processing, or actuation.
-
-## PlatformIO Environments & Commands
-
-This must remain one PlatformIO project with two environments:
+Environment config (`platformio.ini`):
 
 ```ini
-[env:indoor]
-platform = espressif32
-board = esp32dev
-framework = arduino
-build_src_filter = +<indoor_main.cpp>
-
-[env:outdoor]
-platform = espressif32
-board = esp32dev
-framework = arduino
-build_src_filter = +<outdoor_main.cpp>
+[env:agent1]
+; DISCORD_TLS_INSECURE: dev/test only — replace with DISCORD_ROOT_CA_CERT for production
+build_unflags    = -O2 -O3 -Og
+build_flags      = -I include -D AGENT1 -D DISCORD_TLS_INSECURE
+                   -D BOARD_HAS_PSRAM -mfix-esp32-psram-cache-issue -Os
+board_build.partitions = huge_app.csv
+build_src_filter = -<*> +<main.cpp>
 ```
 
-Do not use `board = esp32cam`. The current `platformio.ini` may still need migration from `esp32dev` to `indoor`/`outdoor`.
+**Never use `board = esp32cam`.** Libraries in `lib/` do NOT automatically see `include/` — `-I include` is required.
 
-Common commands:
+---
 
-- `pio run -e indoor`: build Indoor Agent firmware.
-- `pio run -e outdoor`: build Outdoor Agent firmware.
-- `pio run -e indoor -t upload`: flash Indoor Agent.
-- `pio run -e outdoor -t upload`: flash Outdoor Agent.
-- `pio device monitor --port COMX`: open serial logs.
-- `pio test -e indoor` / `pio test -e outdoor`: run tests.
+## Project Structure
 
-## Development Flow
-
-Implement in phases. Do not skip ahead to AI before the cooperation demo is reliable.
-
-1. Hardware basics: LED, buzzer, door sensor, serial logs.
-2. Networking — implement sub-steps in order:
-   a. Config Portal: first-boot Wi-Fi credential provisioning.
-   b. Wi-Fi STA connection (15 s timeout → fallback to portal), fixed-IP, peer REST API.
-   c. Dashboard read-only (`/dashboard` + `/api/status`) with Session Auth (login, logout, cookie, TTL, brute-force throttle).
-   d. Settings write (`/settings` + CSRF) with SettingsStore; enforce dashboard password change on first login.
-   e. Discord Notifier: URL whitelist, CA TLS, rate limit, 5-min failure cooldown.
-3. State machine: leaving, entering, occupied/empty, unknown visitor, alert mode; add `StateEvent` emission.
-4. Camera: init, stream, then face detect.
-5. AI recognition: known/unknown recognition only after earlier phases are stable.
-
-Stability priority is power, door sensor, communication, state machine, camera, then AI.
-
-## Agent Communication Rules
-
-## WiFi Configuration / Config Portal Rules
-
-Both agents use a shared `lib/ConfigPortal/` library for first-boot credential provisioning. Agents call `ConfigPortal::begin(apName)` inside `setup()` before attempting `WiFi.begin()`.
-
-Boot logic:
-1. Read `wifi_ssid` and `wifi_pw` from NVS namespace `"agent_cfg"`.
-2. If found: call `WiFi.begin()` with a 15-second timeout. On failure, fall into Config Portal.
-3. If not found: start Config Portal immediately.
-4. If no POST `/save` received within 5 minutes: restart and retry.
-
-Config Portal constraints:
-- Serve one lightweight HTML page (SSID + Password form only, under 4 KB). No other config here.
-- AP name `"DualCam-Indoor-Setup"` / `"DualCam-Outdoor-Setup"`, password `dualcam99`.
-- On POST `/save`: persist `wifi_ssid`/`wifi_pw` to NVS, then `ESP.restart()`.
-- No auth required on Config Portal (AP mode only; no internet).
-
-Hard constraints for all agents:
-- `ConfigPortal` owns only `wifi_ssid` and `wifi_pw`. All other NVS keys (`dashboard_pw_hash`, `discord_url`) are owned by `SettingsStore`.
-- Never store SystemState, sensor readings, or runtime data to NVS.
-- Fixed IPs (`192.168.0.51` / `192.168.0.52`) are compile-time constants; never make them configurable.
-- No external CDN, React, or Vue anywhere; HTML must fit in ESP32 DRAM.
-
-## Dashboard, Auth, and Settings Rules
-
-After Wi-Fi connects, `DashboardServer` registers routes on the existing WebServer.
-
-Route protection: every route except `/login` and `/logout` must pass `SessionAuth::isAuthorized(server)`. Return HTTP 302 to `/login` on failure.
-
-Session Auth constraints:
-- Username `admin` is hardcoded. Password stored as salted SHA-256 hex in `dashboard_pw_hash`.
-- First visit to `/dashboard` with an unconfigured or default password must redirect to a password-change form.
-- Session token: 16-byte random hex, in-memory, 30-min TTL (reset on each authorized request).
-- Cookie: `sid=<token>; HttpOnly; Path=/; SameSite=Lax`. No `Secure` flag (HTTP only; document this limitation in serial log at boot).
-- Brute-force: 5 consecutive failed logins → 60-second in-memory lockout.
-- Single active session: new login invalidates previous token.
-
-CSRF constraints:
-- Every HTML form that causes a state change (settings save, password change) must embed a CSRF token hidden field.
-- `POST /settings/save` must validate the CSRF token before any NVS write.
-
-SettingsStore constraints:
-- Validate all inputs before writing to NVS: URL must start with `https://discord.com/api/webhooks/` or `https://discordapp.com/api/webhooks/` and be ≤ 256 chars; password 8–64 printable chars.
-- Reject empty or whitespace-only values.
-
-Peer status on Dashboard:
-- Use a cached last-known peer status value updated periodically in `loop()`. Do NOT make a blocking peer HTTP call inside the `/api/status` route handler.
-
-## Discord Notification Rules
-
-`DiscordNotifier::notify(webhookUrl, message)` is the sole public API. Returns `true` on success, `false` on rate-limit, cooldown, offline, or error.
-
-Agents call `notify()` from the orchestration layer (inside `indoor_main.cpp` / `outdoor_main.cpp`) when a `StateEvent` indicates entry into `UNKNOWN_VISITOR` or `ALERT_MODE`. `DoorStateMachine` must not call `DiscordNotifier` directly.
-
-Mandatory checks before any network I/O (fail fast and return false):
-1. WiFi not connected.
-2. `webhookUrl` does not match the allowed prefix whitelist.
-3. Rate limit active (< 30 s since last successful notify for the same state).
-4. Failure cooldown active (< 5 min since last network error).
-
-TLS: use `WiFiClientSecure` with CA root certificate by default. `setInsecure()` is only compiled in when `DISCORD_TLS_INSECURE` is defined; that flag must never be set in production builds.
-
-Network timeout: 5 seconds total (connect + read). On timeout, activate the 5-min failure cooldown.
-
-Log masking: serial logs may print only the last 8 characters of the webhook URL. Never log the full URL, token, or session credentials.
-
-## Agent Communication Rules
-
-Use HTTP REST JSON only in current phases. Do not introduce MQTT yet. Communication must be request/response and bidirectional. Minimum required interaction lines:
-
-1. Indoor requests `outside_status`.
-2. Outdoor responds with `outside_status`.
-3. Outdoor requests `home_state`.
-4. Indoor responds with `home_state`.
-
-Each agent must be able to send requests, receive requests, send responses, and receive responses.
-
-## State Machine Rules
-
-Centralize state logic in `lib/DoorStateMachine/`; do not scatter transitions through `loop()`.
-
-Required states:
-
-```cpp
-enum class SystemState {
-  IDLE,
-  PREPARE_TO_LEAVE,
-  PREPARE_TO_ENTER,
-  LEAVING_HOME,
-  ENTERING_HOME,
-  HOME_OCCUPIED,
-  HOME_EMPTY,
-  UNKNOWN_VISITOR,
-  ALERT_MODE
-};
+```
+src/
+  main.cpp              # All callbacks, setup(), loop()
+lib/
+  FaceRecognizer/       # HOG-lite 64-dim feature, NVS face storage
+  FaceVoter/            # Temporal voting (prevents single-frame trigger)
+  CameraAgent/          # Camera init, MJPEG stream, enroll scheduling
+  DoorSensor/           # Hall sensor ADC, dual-bound hysteresis
+  LedController/        # WS2812B single NeoPixel
+  BuzzerController/     # Passive buzzer, LEDC PWM
+  SecurityStateMachine/ # AlertLevel logic, alarm callbacks
+  AgentComm/            # MQTT publish/subscribe
+  DiscordNotifier/      # HTTPS webhook, TLS, rate limiting
+  ConfigPortal/         # AP mode first-boot WiFi provisioning
+  ConfigManager/        # MQTT + buzzer NVS settings
+  SettingsStore/        # Password, Discord URL, hall bounds NVS
+  SessionAuth/          # Session token, CSRF, brute-force throttle
+  DashboardServer/      # HTTP routes, PROGMEM HTML, AJAX API
+  LogManager/           # RAM ring buffer + SPIFFS NDJSON logs
+include/
+  config.h              # All timing constants
+  pins.h                # GPIO assignments (LED=32, BUZZER=13, HALL=33)
+  states.h              # DoorState, FaceState, AlertLevel, VoteResult, AlertEvent enums
+  messages.h            # MQTT topics and JSON field constants
 ```
 
-Required timing constants:
+---
 
-- Indoor face recent window: 10 seconds.
-- Outdoor face recent window: 10 seconds.
-- Unknown visitor timeout: 15 seconds.
-- Door debounce: 100-300 ms.
+## Core Architecture Rules
 
-Timeouts must return the system to `IDLE`.
+### Face Recognition
+- **Algorithm**: HOG-lite — 4×4 grid cells × 4 orientation bins = **64-dim** feature vector
+- **Gradient**: central difference (`dx = Y(x+1) - Y(x-1)`), NOT Sobel
+- **Input**: YUV422 Y-channel only, QVGA 320×240, central 60% ROI
+- **Pipeline order**: extract → per-cell L1 norm → active-cell gate (< 4 active → NO_FACE) → global L2 norm → texture check → similarity
+- **Similarity threshold**: `FACE_SIMILARITY_THRESHOLD` = 0.90; margin = 0.03
+- Single-frame results are never used directly — must pass through `FaceVoter`
 
-## Hardware, Camera, and GPIO Rules
+### FaceVoter
+- KNOWN_CONFIRMED: ≥ 3 hits within 8 s window
+- UNKNOWN_CONFIRMED: persistent UNKNOWN for ≥ 10 s with ≥ 10 hits
+- Idle reset: 5 s with no face detected
 
-Door sensor is mandatory and confirms entering/leaving. Do not rely on camera alone.
+### SecurityStateMachine
+- **Pure callback architecture**: SSM never directly controls hardware or sends network requests
+- All hardware/network side effects go through registered callbacks (`setOnAlert`, `setOnDoorEvent`, `setOnKnownConfirmed`, `setOnAlarmCancelled`, `setOnBuzzerSilence`)
+- `_cancelAlarm()` fires both `_onBuzzerSilence` and `_onAlarmCancelled` callbacks
+- The alarm is always cancelled when: buzzer duration expires, door closes, or KNOWN_CONFIRMED received
 
-Camera development order is camera init, stream, face detect, then known/unknown recognition. Start with `FRAMESIZE_QVGA`.
+### LED Priority (updateLed() in main.cpp)
+1. `isAlarmActive()` → red blink (250 ms)
+2. `ALERT_GREEN` → solid green
+3. Face detected (any type) → solid white
+4. Otherwise → off
 
-Avoid GPIO 0, 2, 6-11, and 12. Prefer GPIO 25, 26, 27, 32, 33, 34, and 35.
+### MQTT
+- Publish: `home/security/door`, `home/security/face`, `home/security/alert`, `home/security/status`
+- Subscribe: `home/home_state/presence`, `home/home_state/alarm_decision`
+- Agent 2 offline (no presence for 15 s) → ALERT_RED, independent operation
 
-Use these fixed IPs only:
+---
 
-- Indoor: `192.168.0.51`
-- Outdoor: `192.168.0.52`
+## WebUI Routes
 
-Do not add dynamic discovery during the current phases.
+Full route list in `CLAUDE.md` Section 11 and `docs/webui.md`. Key rules:
+- All state-changing POSTs require CSRF token
+- `/settings` is the unified settings page (Discord, MQTT, Hall bounds, Buzzer, Password)
+- No WiFi settings in WebUI — WiFi only via Config Portal (AP mode)
+- HTML stored in PROGMEM `const char[]`; no LittleFS, no external CDN
 
-## Coding Style & Naming
+---
 
-Use C++ with two-space indentation and same-line braces. Use `PascalCase` for types, `camelCase` for functions and variables, and `UPPER_SNAKE_CASE` for constants/macros. Prefer small functions with clear hardware or protocol intent, such as `readDoorSensor()`, `sendOutdoorStatusRequest()`, or `enterAlertMode()`.
+## NVS Keys (namespace `"agent_cfg"`)
 
-## Testing, Logging, and Demo Validation
+| Key | Owner | Notes |
+|-----|-------|-------|
+| `wifi_ssid`, `wifi_pw` | ConfigPortal | String |
+| `dashboard_pw` | SettingsStore | salted SHA-256 hex |
+| `pw_changed` | SettingsStore | Bool |
+| `discord_url` | SettingsStore | max 256 chars |
+| `hall_lo`, `hall_hi` | SettingsStore | UInt32; form fields use `hall_lower`/`hall_upper` |
+| `mqtt_broker` | ConfigManager | max 63 chars |
+| `mqtt_port` | ConfigManager | UInt16 |
+| `buzzer_freq`, `buzzer_dur` | ConfigManager | UInt32; WebUI inputs in Hz / seconds |
+| `face_feat`, `face_cnt`, `face_names`, `face_tcnt` | FaceRecognizer | Blob |
 
-Place tests under `test/`. Test reusable protocol, serialization, debounce, and state-machine logic when possible. Before submitting firmware changes, build the affected environment and record manual verification.
+---
 
-All important events must log with an agent prefix:
+## GPIO Constraints
 
-```text
-[Indoor] request outside_status
-[Outdoor] response outside_status
-[Indoor] door opened
-[Indoor] state -> LEAVING_HOME
-```
+**Safe:** GPIO 13, 32, 33  
+**Prohibited for general use:** 0, 2, 5, 6–11, 12, 18–19, 21–23, 25–27, 34–36, 39
 
-Minimum demo scenarios:
+GPIO 32 (NMK99): `CAM_PWDN` unconnected → available for WS2812B. Set `pin_pwdn = -1` in camera config.
 
-- Leaving detection.
-- Entering detection.
-- Unknown visitor alert.
-- Each agent independently demonstrates sensing, local processing, and local actuation.
+---
 
-## Commit, PR, and Security Guidelines
+## Mandatory Constraints
 
-Use short action-style commits, for example `add indoor HTTP server`, `add state machine`, or `add door debounce`. Pull requests should describe affected agent(s), hardware tested, commands run, upload result, and serial-monitor observations.
+- Never trigger events from a single camera frame — always go through FaceVoter
+- Never skip texture validation or active-cell gate in FaceRecognizer
+- Never let WebUI routes make security decisions
+- Never halt local operation due to WiFi / Discord / MQTT / NTP failure
+- Never use large CNN or cloud AI on-device
 
-Never commit `.pio/`, Wi-Fi passwords, tokens, generated binaries, local COM-port settings, or private network secrets.
+---
+
+## Commit and Security Guidelines
+
+- Log format: `[Agent1] <event description>`
+- Never commit `.pio/`, Wi-Fi passwords, tokens, or binaries
+- Webhook URL: log only the last 8 characters (`discord sent (last 8: xxxxxxxx)`)
+- Do not log full session tokens or passwords

@@ -6,7 +6,7 @@ ESP32 NMK99 + OV2640 Camera 實現的可獨立運作門口監控 Agent。整合�
 
 | 功能 | 說明 |
 |------|------|
-| 人臉辨識 | 輕量 block-feature 演算法，cosine similarity，不依賴大型 CNN |
+| 人臉辨識 | 輕量 HOG-lite 演算法（64-dim），cosine similarity，不依賴大型 CNN |
 | 門禁偵測 | 霍爾感應器 ADC 讀取，去彈跳，DoorState 轉換 |
 | 警戒燈號 | WS2812B RGB LED，GREEN / YELLOW / RED + 閃爍告警 |
 | 蜂鳴器告警 | 偵測未知訪客時觸發 |

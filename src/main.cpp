@@ -424,7 +424,7 @@ void setup() {
   }, "cam_init", 8192, nullptr, 1, nullptr);
 
   Serial.println("[Agent1] ready");
-  Serial.println("[Agent1]   h=Hall value  H=save threshold  d=door toggle");
+  Serial.println("[Agent1]   h=Hall value  H=auto-calibrate bounds  d=door toggle");
   Serial.println("[Agent1]   u=unknown     e=enroll face     r=clear faces");
   Serial.println("[Agent1]   n=face count  c=camera status   s=full status");
   Serial.println("[Agent1]   W=clear WiFi credentials");

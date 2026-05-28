@@ -79,7 +79,7 @@ listener 1883 0.0.0.0
 allow_anonymous true
 ```
 
-設定完成後，透過 WebUI `/settings/system` 輸入 Broker IP 與 Port。
+設定完成後，透過 WebUI `/settings` 輸入 Broker IP 與 Port。
 
 ---
 
@@ -130,7 +130,7 @@ Serial 輸出：
 
 ### Step 6：MQTT 設定（若使用 Agent 2）
 
-1. 前往 WebUI `/settings/system`
+1. 前往 WebUI `/settings`
 2. 輸入 MQTT Broker IP 與 Port
 3. 儲存 → 裝置自動連線 MQTT
 
@@ -142,14 +142,13 @@ Serial 確認：
 ### Step 7：霍爾感應器校準
 
 1. 安裝門磁感應器與磁鐵
-2. 關閉門，Serial 輸入 `h` 記錄 raw 值
-3. 開啟門，再次記錄 raw 值
-4. 計算中點，Serial 輸入 `H` 儲存閾值
+2. 關閉門（磁鐵吸附），Serial 輸入 `H`：自動偵測偏移方向，更新對應的 lo 或 hi 邊界
+3. Serial 輸入 `h` 確認校準結果（顯示 raw、lo、hi、hyst、door 狀態）
+4. 開關門測試，確認 `door OPEN/CLOSED` 正確切換
 
 ### Step 8：人臉註冊
 
-1. 前往 WebUI `/face/register`
-2. 輸入使用者名稱，點擊「開始註冊」
+1. 前往 WebUI `/dashboard`，在人臉管理區塊輸入使用者名稱，點擊「Enroll Face」
 3. 站在 Camera 前（正面、30–80 cm）
 4. 等待「已儲存」確認訊息
 5. 重複步驟 2–4 最多 7 位使用者
@@ -313,7 +312,7 @@ ESP32 MAC 位址可從 Serial 開機日誌取得：
 ### 人臉辨識準確率低
 
 1. 確認光線充足均勻（避免逆光、強烈側光）
-2. Serial 查看 texture score（輸入 `c`）：若 < 20，考慮降低 `FACE_TEXTURE_MIN_STDDEV`
+2. WebUI `/api/status` 查看 `face_tex`（texture score）：若 < 20，考慮降低 `FACE_TEXTURE_MIN_STDDEV`
 3. 重新在不同光線條件下多次註冊（清除後重新全部註冊）
 4. 若同一人常被誤認為 UNKNOWN，降低 `FACE_SIMILARITY_THRESHOLD`（如 0.88）
 
