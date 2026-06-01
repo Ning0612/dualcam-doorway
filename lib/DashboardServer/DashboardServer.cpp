@@ -908,6 +908,19 @@ void DashboardServer::begin(WebServer& server,
     server.send(ok ? 200 : 500, "application/json", json);
   });
 
+  // ── Snapshot (unauthenticated, LAN-only, for Agent 2) ────────────────────
+  server.on("/snapshot", HTTP_GET, [&server]() {
+    uint8_t* buf = nullptr;
+    size_t   len = 0;
+    if (!CameraAgent::captureJpeg(&buf, &len) || buf == nullptr || len == 0) {
+      free(buf);
+      server.send(503, "text/plain", "Camera not ready");
+      return;
+    }
+    server.send_P(200, "image/jpeg", reinterpret_cast<const char*>(buf), len);
+    free(buf);
+  });
+
   // ── 404 fallback ────────────────────────────────────────────────────────────
   server.onNotFound([&server]() {
     server.sendHeader("Location", "/dashboard");
