@@ -14,8 +14,12 @@
 class AgentComm {
 public:
   // Call once after WiFi is connected.
-  // clientId: unique MQTT client identifier (e.g., "faceguard").
-  static void begin(const char* broker, uint16_t port, const char* clientId = "faceguard");
+  // username/password: pass empty strings for unauthenticated brokers.
+  // clientId: unique MQTT identifier; rarely changed from the default.
+  // NOTE: parameter order changed from original (clientId moved to last).
+  static void begin(const char* broker, uint16_t port,
+                    const char* username = "", const char* password = "",
+                    const char* clientId = "faceguard");
 
   // Call every loop() iteration: runs PubSubClient::loop() and reconnect logic.
   static void tick();

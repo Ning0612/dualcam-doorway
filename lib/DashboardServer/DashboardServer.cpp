@@ -171,6 +171,11 @@ static const char SETTINGS_HTML[] =
   "<input name='mqtt_broker' maxlength='63' placeholder='192.168.x.x' value='%MQTT_BROKER%'></label>"
   "<label>Port<br>"
   "<input type='number' name='mqtt_port' min='1' max='65535' value='%MQTT_PORT%'></label>"
+  "<label>Username<br>"
+  "<input name='mqtt_user' maxlength='63' placeholder='(none)' value='%MQTT_USER%'></label>"
+  "<label>Password<br>"
+  "<input type='password' name='mqtt_pw' maxlength='63' placeholder='%MQTT_PW_HINT%'></label>"
+  "<p style='font-size:.8em;color:#666'>Leave password blank to keep existing value.</p>"
   "</fieldset>"
   "<fieldset><legend>Hall Sensor Bounds</legend>"
   "<label>Lower Bound (0-4095)<br>"
@@ -674,6 +679,9 @@ void DashboardServer::begin(WebServer& server,
     page.replace("%DISCORD_URL%", htmlAttrEscape(SettingsStore::getDiscordUrl()));
     page.replace("%MQTT_BROKER%", htmlAttrEscape(ConfigManager::getMqttBroker()));
     page.replace("%MQTT_PORT%",   String(ConfigManager::getMqttPort()));
+    page.replace("%MQTT_USER%",   htmlAttrEscape(ConfigManager::getMqttUsername()));
+    page.replace("%MQTT_PW_HINT%", ConfigManager::getMqttPassword().length() > 0
+                                   ? "(set — leave blank to keep)" : "(none set)");
     page.replace("%HALL_LOWER%",  String(SettingsStore::getHallLowerBound()));
     page.replace("%HALL_UPPER%",  String(SettingsStore::getHallUpperBound()));
     page.replace("%HALL_RAW%",    String(DoorSensor::getRaw()));
@@ -724,7 +732,12 @@ void DashboardServer::begin(WebServer& server,
       String portStr = server.arg("mqtt_port");
       uint16_t port  = (uint16_t)portStr.toInt();
       if (port == 0) port = MQTT_DEFAULT_PORT;
-      if (!ConfigManager::save(broker, port)) {
+      String mqttUser = server.arg("mqtt_user");
+      mqttUser.trim();
+      if (mqttUser.length() > 63) mqttUser = mqttUser.substring(0, 63);
+      String mqttPass = server.arg("mqtt_pw");  // empty = keep existing
+      if (mqttPass.length() > 63) mqttPass = mqttPass.substring(0, 63);
+      if (!ConfigManager::save(broker, port, mqttUser, mqttPass)) {
         msg += "<p class='err'>Failed to save MQTT settings.</p>";
       } else {
         msg += "<p class='ok'>MQTT settings saved (restart to apply).</p>";
@@ -781,6 +794,9 @@ void DashboardServer::begin(WebServer& server,
     page.replace("%DISCORD_URL%", htmlAttrEscape(SettingsStore::getDiscordUrl()));
     page.replace("%MQTT_BROKER%", htmlAttrEscape(ConfigManager::getMqttBroker()));
     page.replace("%MQTT_PORT%",   String(ConfigManager::getMqttPort()));
+    page.replace("%MQTT_USER%",   htmlAttrEscape(ConfigManager::getMqttUsername()));
+    page.replace("%MQTT_PW_HINT%", ConfigManager::getMqttPassword().length() > 0
+                                   ? "(set — leave blank to keep)" : "(none set)");
     page.replace("%HALL_LOWER%",  String(SettingsStore::getHallLowerBound()));
     page.replace("%HALL_UPPER%",  String(SettingsStore::getHallUpperBound()));
     page.replace("%HALL_RAW%",    String(DoorSensor::getRaw()));

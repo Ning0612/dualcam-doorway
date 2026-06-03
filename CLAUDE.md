@@ -155,6 +155,8 @@ enum class AlertEvent  { UNKNOWN_VISITOR = 0, USER_RETURNED = 1, BOOT = 2 };
 | `hall_lo` / `hall_hi` | SettingsStore | UInt32 | open zone 邊界；form field 名為 `hall_lower`/`hall_upper` |
 | `mqtt_broker` | ConfigManager | String | max 63 chars |
 | `mqtt_port` | ConfigManager | UInt16 | default 1883 |
+| `mqtt_user` | ConfigManager | String | max 63 chars；空 = 無認證 |
+| `mqtt_pw` | ConfigManager | String | max 63 chars；WebUI 留空 = 保留原值；username 清空時連帶清除 |
 | `buzzer_freq` | ConfigManager | UInt32 | Hz；WebUI 輸入 Hz |
 | `buzzer_dur` | ConfigManager | UInt32 | ms；WebUI 輸入秒×1000 |
 | `face_feat` | FaceRecognizer | Blob | max 8960 B（7×5×64×4） |
@@ -226,8 +228,10 @@ enum class AlertEvent  { UNKNOWN_VISITOR = 0, USER_RETURNED = 1, BOOT = 2 };
 
 ```
 Publish:   home/security/door | face | alert | status
-Subscribe: home/home_state/presence | alarm_decision
+Subscribe: home/home_state/presence | alarm_decision | home/display/status
 ```
+
+所有 publish payload 包含 `agent: "agent1"` 與 ISO 8601 UTC `timestamp`（`...Z`）；NTP 未同步時 timestamp 為 `"1970-01-01T00:00:00.000000Z"`。
 
 Agent 2 離線（15 s 無 presence）→ ALERT_RED。完整 payload 格式見 `docs/mqtt.md`。
 

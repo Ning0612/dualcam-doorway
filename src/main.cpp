@@ -398,7 +398,8 @@ void setup() {
   AgentComm::setOnPresence(onPresence);
   AgentComm::setOnAlarmDecision(onAlarmDecision);
   AgentComm::setOnConnectionChange(onAgent2Connection);
-  AgentComm::begin(ConfigManager::getMqttBroker().c_str(), ConfigManager::getMqttPort());
+  AgentComm::begin(ConfigManager::getMqttBroker().c_str(), ConfigManager::getMqttPort(),
+                   ConfigManager::getMqttUsername().c_str(), ConfigManager::getMqttPassword().c_str());
 
   // Discord boot notification (async, non-blocking)
   if (xTaskCreate([](void*) {

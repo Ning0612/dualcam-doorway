@@ -4,6 +4,7 @@
 #include <WiFi.h>
 #include <WiFiClient.h>
 #include <ArduinoJson.h>
+#include <time.h>
 
 // ── Static storage ────────────────────────────────────────────────────────────
 
@@ -12,6 +13,8 @@ static PubSubClient _mqtt(_wifiClient);
 
 static char     _broker[64]   = {};
 static uint16_t _port         = MQTT_DEFAULT_PORT;
+static char     _user[64]     = {};
+static char     _pass[64]     = {};
 static char     _clientId[24] = "faceguard";
 static bool     _configured   = false;
 
@@ -26,6 +29,26 @@ static unsigned long _lastPresenceMs  = 0;
 static void (*_onPresence)(bool, int)       = nullptr;
 static void (*_onAlarmDecision)(AlarmDecision) = nullptr;
 static void (*_onConnChange)(bool)          = nullptr;
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+static String _getTimestamp() {
+  time_t now = time(nullptr);
+  if (now < 1700000000UL) {
+    // NTP not synced: use epoch-0 sentinel to keep valid ISO 8601 schema
+    return String("1970-01-01T00:00:00.000000Z");
+  }
+  struct tm t;
+  gmtime_r(&now, &t);  // UTC so Z suffix is correct
+  char buf[28];
+  strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S.000000Z", &t);
+  return String(buf);
+}
+
+static void _appendCommonFields(JsonDocument& doc) {
+  doc[MSG_AGENT_ID]  = "agent1";
+  doc[MSG_TIMESTAMP] = _getTimestamp();
+}
 
 // ── MQTT message handler ──────────────────────────────────────────────────────
 
@@ -60,6 +83,10 @@ void AgentComm::_onMessage(const char* topic, byte* payload, unsigned int len) {
     if      (strcmp(ad, ALARM_TRIGGER) == 0) decision = AlarmDecision::TRIGGER_ALARM;
     else if (strcmp(ad, ALARM_CANCEL)  == 0) decision = AlarmDecision::CANCEL_ALARM;
     _onAlarmDecision(decision);
+
+  } else if (strcmp(topic, MQTT_TOPIC_DISPLAY_STATUS) == 0) {
+    const char* status = doc["status"] | "unknown";
+    Serial.printf("[FaceGuard] display/status: %s\n", status);
   }
 }
 
@@ -70,11 +97,15 @@ void AgentComm::_reconnect() {
   if (millis() - _lastReconnectMs < MQTT_RECONNECT_MS) return;
   _lastReconnectMs = millis();
 
-  Serial.printf("[FaceGuard] MQTT connecting to %s:%u...\n", _broker, _port);
-  if (_mqtt.connect(_clientId)) {
+  Serial.printf("[FaceGuard] MQTT connecting to %s:%u (user=%s)...\n",
+                _broker, _port, _user[0] ? _user : "(none)");
+  bool ok = _user[0] ? _mqtt.connect(_clientId, _user, _pass)
+                     : _mqtt.connect(_clientId);
+  if (ok) {
     Serial.println("[FaceGuard] MQTT connected");
     _mqtt.subscribe(MQTT_TOPIC_PRESENCE);
     _mqtt.subscribe(MQTT_TOPIC_ALARM);
+    _mqtt.subscribe(MQTT_TOPIC_DISPLAY_STATUS);
     _brokerConnected = true;
     // Agent 2 online state is determined by presence heartbeats, not broker connect.
     // _onConnChange is NOT fired here; wait for the first presence message.
@@ -92,13 +123,17 @@ bool AgentComm::_publish(const char* topic, const String& payload) {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-void AgentComm::begin(const char* broker, uint16_t port, const char* clientId) {
+void AgentComm::begin(const char* broker, uint16_t port,
+                      const char* username, const char* password,
+                      const char* clientId) {
   if (!broker || strlen(broker) == 0) {
     Serial.println("[FaceGuard] MQTT broker not configured — AgentComm disabled");
     return;
   }
-  strncpy(_broker, broker, sizeof(_broker) - 1);
+  strncpy(_broker,   broker,   sizeof(_broker)   - 1);
   strncpy(_clientId, clientId, sizeof(_clientId) - 1);
+  strncpy(_user, username ? username : "", sizeof(_user) - 1);
+  strncpy(_pass, password ? password : "", sizeof(_pass) - 1);
   _port       = port;
   _configured = true;
 
@@ -137,9 +172,9 @@ void AgentComm::tick() {
 
 bool AgentComm::publishDoor(DoorState state, const char* relatedUser) {
   JsonDocument doc;
+  _appendCommonFields(doc);
   doc[MSG_DOOR_STATE] = doorStateToString(state);
   if (relatedUser && relatedUser[0]) doc[MSG_USER_NAME] = relatedUser;
-  doc[MSG_TIMESTAMP]  = millis();
   String payload;
   serializeJson(doc, payload);
   return _publish(MQTT_TOPIC_DOOR, payload);
@@ -147,9 +182,9 @@ bool AgentComm::publishDoor(DoorState state, const char* relatedUser) {
 
 bool AgentComm::publishFace(const char* userName, float similarity) {
   JsonDocument doc;
+  _appendCommonFields(doc);
   doc[MSG_USER_NAME]  = userName ? userName : "";
   doc[MSG_SIMILARITY] = similarity;
-  doc[MSG_TIMESTAMP]  = millis();
   String payload;
   serializeJson(doc, payload);
   return _publish(MQTT_TOPIC_FACE, payload);
@@ -157,9 +192,9 @@ bool AgentComm::publishFace(const char* userName, float similarity) {
 
 bool AgentComm::publishAlert(AlertLevel level, const char* alertType) {
   JsonDocument doc;
+  _appendCommonFields(doc);
   doc[MSG_ALERT_LEVEL] = alertLevelToString(level);
   doc[MSG_ALERT_TYPE]  = alertType ? alertType : "";
-  doc[MSG_TIMESTAMP]   = millis();
   String payload;
   serializeJson(doc, payload);
   return _publish(MQTT_TOPIC_ALERT, payload);
@@ -167,9 +202,9 @@ bool AgentComm::publishAlert(AlertLevel level, const char* alertType) {
 
 bool AgentComm::publishStatus(AlertLevel level, unsigned long uptime) {
   JsonDocument doc;
+  _appendCommonFields(doc);
   doc[MSG_ALERT_LEVEL] = alertLevelToString(level);
   doc[MSG_UPTIME]      = uptime;
-  doc[MSG_TIMESTAMP]   = millis();
   String payload;
   serializeJson(doc, payload);
   return _publish(MQTT_TOPIC_STATUS, payload);
