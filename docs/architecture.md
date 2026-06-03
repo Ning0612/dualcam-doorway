@@ -129,6 +129,8 @@ loop() 每次迭代：
 |---------|------|------|
 | `mqtt_broker` | String | MQTT Broker IP/hostname |
 | `mqtt_port` | UInt16 | 預設 1883 |
+| `mqtt_user` | String | MQTT 認證 Username（空 = 無認證） |
+| `mqtt_pw` | String | MQTT 認證 Password（留空保留原值；username 清空時連帶清除） |
 | `buzzer_freq` | UInt32 | 蜂鳴器頻率 Hz；預設 2000 |
 | `buzzer_dur` | UInt32 | 蜂鳴器持續時間 ms；預設 60000 |
 
@@ -158,10 +160,14 @@ loop() 每次迭代：
 ### AgentComm
 
 - MQTT Broker 未設定時（空字串），`begin()` 為 no-op，`isConnected()` 回傳 false
-- MQTT 斷線時每 5s 自動重連，重連後立即重新 subscribe
-- 接收 MQTT `home/home_state/presence` → `onPresence(occupied, score)` callback
+- 支援 Broker 認證（Username/Password 儲存於 NVS `mqtt_user`/`mqtt_pw`）；Username 為空時匿名連線
+- MQTT 斷線時每 5s 自動重連，重連後立即重新 subscribe 三個主題
+- 接收 MQTT `home/home_state/presence` → `onPresence(occupied, score)` callback；同時更新 Agent 2 在線計時
 - 接收 MQTT `home/home_state/alarm_decision` → `onAlarmDecision(decision)` callback
-- MQTT 連線狀態變更 → `onConnectionChange(connected)` callback
+- 接收 MQTT `home/display/status` → 僅印 Serial，不影響警戒邏輯
+- **Agent 2 在線狀態**由 presence heartbeat 到達時間決定（非 MQTT broker 連線狀態）：
+  - 首次收到 presence → `onConnectionChange(true)`
+  - AGENT2_OFFLINE_TIMEOUT_MS（15s）無 presence 或 Broker 斷線 → `onConnectionChange(false)`
 
 ### DiscordNotifier
 
@@ -341,9 +347,9 @@ sm.setOnAlarmCancelled(onAlarmCancelled); // 警報取消（Agent 2 或自動）
 sm.setOnBuzzerSilence(onBuzzerSilence);   // 蜂鳴器靜音（先於 onAlarmCancelled 觸發）
 
 // AgentComm callbacks
-AgentComm::setOnPresence(onPresence);              // MQTT presence 訊息
+AgentComm::setOnPresence(onPresence);              // MQTT presence 訊息（同步更新 Agent 2 在線狀態）
 AgentComm::setOnAlarmDecision(onAlarmDecision);    // MQTT alarm decision
-AgentComm::setOnConnectionChange(onAgent2Connection); // MQTT 連線狀態
+AgentComm::setOnConnectionChange(onAgent2Connection); // Agent 2 在線/離線狀態變更（非 broker 連線）
 
 // DoorSensor callback
 DoorSensor::setOnChange(onDoorChange);    // 門狀態確認改變

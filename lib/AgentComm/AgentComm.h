@@ -37,8 +37,10 @@ public:
   // Called when a valid alarm_decision message arrives from Agent 2.
   static void setOnAlarmDecision(void (*cb)(AlarmDecision decision));
 
-  // Called when MQTT connection state changes (online = true/false).
-  // Use to update SecurityStateMachine::onAgent2Online().
+  // Called when Agent 2 presence online state changes (online = true/false).
+  // Fires true on first presence heartbeat after offline; fires false on presence
+  // timeout (AGENT2_OFFLINE_TIMEOUT_MS) or MQTT broker disconnect.
+  // NOTE: broker connected ≠ Agent 2 online — this tracks heartbeat freshness, not broker state.
   static void setOnConnectionChange(void (*cb)(bool connected));
 
   static bool isConnected();

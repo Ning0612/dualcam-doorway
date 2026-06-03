@@ -164,7 +164,7 @@ static void onAlarmDecision(AlarmDecision decision) {
 }
 
 static void onAgent2Connection(bool connected) {
-  Serial.printf("[FaceGuard] Agent2 MQTT %s\n", connected ? "connected" : "disconnected");
+  Serial.printf("[FaceGuard] Agent2 presence %s\n", connected ? "online" : "offline");
   sm.onAgent2Online(connected);
   // LED is handled by updateLed() in loop().
 }

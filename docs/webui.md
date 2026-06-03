@@ -106,14 +106,17 @@ Set-Cookie: sid=<16-byte-random-hex>; HttpOnly; Path=/; SameSite=Lax
 | 設定項目 | 說明 | 限制 |
 |---------|------|------|
 | Discord Webhook URL | Discord 通知 Webhook | 需以 `https://discord.com/api/webhooks/` 或 `https://discordapp.com/api/webhooks/` 開頭；最多 256 字元；清空 = 停用 |
-| MQTT Broker | IP 或 hostname | 最多 63 字元；空值 = 停用 MQTT |
-| MQTT Port | 埠號 | 1–65535；預設 1883 |
+| MQTT Broker | IP 或 hostname | 最多 63 字元（HTML 層限制）；空值 = 停用 MQTT |
+| MQTT Port | 埠號 | 1–65535（HTML 層限制）；預設 1883 |
+| MQTT Username | 認證用帳號 | 最多 63 字元；空值 = 無認證 |
+| MQTT Password | 認證用密碼 | 最多 63 字元；留空不更新；Username 清空時連帶清除 |
 | 霍爾 Open Zone 下界（hall_lower） | ADC open zone 下界 | 0–4095；OPEN 觸發：raw > hall_lower + 150 |
 | 霍爾 Open Zone 上界（hall_upper） | ADC open zone 上界 | 0–4095；OPEN 觸發：raw < hall_upper - 150 |
 | 蜂鳴器頻率（Hz） | 警報音頻率 | 200–8000；預設 2000 |
 | 蜂鳴器持續時間（秒） | 警報蜂鳴持續時間 | 10–300 秒；儲存為 ms；預設 60 |
-| Dashboard 密碼 | 新密碼（需輸入兩次） | 8–64 字元；空白不更新 |
+| Dashboard 密碼 | 新密碼（需輸入兩次） | 8–64 字元 ASCII printable（不可全為空格）；空白不更新 |
 
+> **MQTT 設定套用**：MQTT broker / port / auth 設定儲存後需**重啟裝置**才生效；設定頁面會顯示 `MQTT settings saved (restart to apply).`。  
 > WiFi SSID / 密碼**不**在此設定。WiFi 憑證只能透過 Config Portal（AP 模式）設定。若需變更 WiFi，透過 Serial 輸入 `W` 清除憑證並重啟。
 
 ### Dashboard（`/dashboard`）

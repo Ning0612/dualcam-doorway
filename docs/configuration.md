@@ -76,6 +76,8 @@
 | `hall_hi` | SettingsStore | UInt32 | 霍爾感應器 open zone 上界 | 3000 |
 | `mqtt_broker` | ConfigManager | String | MQTT Broker IP/hostname | 空 |
 | `mqtt_port` | ConfigManager | UInt16 | MQTT Broker port | 1883 |
+| `mqtt_user` | ConfigManager | String | MQTT 認證 Username（空 = 無認證） | 空 |
+| `mqtt_pw` | ConfigManager | String | MQTT 認證 Password（WebUI 留空 = 保留原值；username 清空時連帶清除） | 空 |
 | `buzzer_freq` | ConfigManager | UInt32 | 蜂鳴器頻率 Hz | 2000 |
 | `buzzer_dur` | ConfigManager | UInt32 | 蜂鳴器持續時間 ms | 60000 |
 | `face_feat` | FaceRecognizer | Blob | 特徵向量（最大 7×5×64×4 = 8960 bytes） | 空 |
@@ -95,13 +97,18 @@
 | 設定項目 | NVS Key | 說明 |
 |---------|---------|------|
 | Discord Webhook URL | `discord_url` | 必須以 `https://discord.com/api/webhooks/` 或 `https://discordapp.com/api/webhooks/` 開頭；清空 = 停用 |
-| MQTT Broker | `mqtt_broker` | IP 或 hostname；最多 63 字元；空值 = 停用 MQTT |
-| MQTT Port | `mqtt_port` | 1–65535；預設 1883 |
+| MQTT Broker | `mqtt_broker` | IP 或 hostname；最多 63 字元（HTML 層限制，後端不驗證長度）；空值 = 停用 MQTT |
+| MQTT Port | `mqtt_port` | 1–65535（HTML 層限制，後端不驗證範圍）；預設 1883 |
+| MQTT Username | `mqtt_user` | 最多 63 字元；空值 = 無認證 |
+| MQTT Password | `mqtt_pw` | 最多 63 字元；留空不更新；Username 清空時連帶清除 |
 | 霍爾感應器下界 | `hall_lo` | open zone 下界（ADC 0–4095）；預設 1000 |
 | 霍爾感應器上界 | `hall_hi` | open zone 上界（ADC 0–4095）；預設 3000 |
 | 蜂鳴器頻率 | `buzzer_freq` | 200–8000 Hz；WebUI 輸入 Hz，直接存 NVS |
 | 蜂鳴器持續時間 | `buzzer_dur` | WebUI 輸入秒（10–300 s），存 NVS 時轉為毫秒 |
-| Dashboard 密碼 | `dashboard_pw` | 新密碼（需輸入兩次確認） |
+| Dashboard 密碼 | `dashboard_pw` | 新密碼（需輸入兩次確認；8–64 字元 ASCII printable，不可全空格） |
+
+> **MQTT 設定套用**：MQTT 所有設定（broker / port / username / password）寫入 NVS 後需重啟裝置才生效，不會即時重新連線。  
+> **已知限制**：MQTT Broker 長度與 Port 範圍僅在 HTML 表單層驗證；直接 POST 可繞過限制寫入 NVS，應避免非 WebUI 直接送出表單。
 
 > WiFi 設定**不**在 WebUI，只能透過 Config Portal（AP 模式）設定。
 

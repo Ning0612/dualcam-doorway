@@ -139,11 +139,12 @@ Serial 輸出：
 
 1. 前往 WebUI `/settings`
 2. 輸入 MQTT Broker IP 與 Port
-3. 儲存 → 裝置自動連線 MQTT
+3. 若 Broker 需認證，填入 Username 與 Password（Password 留空 = 保留原值）
+4. 儲存後**重啟裝置**（MQTT 設定寫入 NVS，需重啟才套用）
 
-Serial 確認：
+Serial 確認（重啟後）：
 ```
-[FaceGuard] Agent2 MQTT connected
+[FaceGuard] MQTT connected
 ```
 
 ### Step 7：霍爾感應器校準
@@ -305,7 +306,7 @@ ESP32 MAC 位址可從 Serial 開機日誌取得：
 1. 確認 Broker IP 可從 FaceGuard 網段 ping 到
 2. 確認 Broker 服務運行：`mosquitto_sub -h <ip> -t test`
 3. 確認 port 1883 未被防火牆封鎖
-4. 若 Broker 需認證，目前版本不支援（需修改 `AgentComm::_reconnect()`）
+4. 若 Broker 需認證，在 WebUI `/settings` 的 MQTT 區填入 Username 與 Password 後儲存
 
 ### Discord 通知未收到
 
@@ -344,3 +345,4 @@ ESP32 MAC 位址可從 Serial 開機日誌取得：
 | MQTT 斷線 | 本機警戒不中斷，背景重連 | 自動重連後重新 subscribe |
 | Discord 失敗 | 記錄失敗狀態，5 分鐘後重試 | cooldown 結束後恢復 |
 | NVS 寫入失敗 | 記錄錯誤，繼續運作 | 手動重試或重啟 |
+| MQTT 設定部分寫入失敗 | WebUI 顯示成功（ConfigManager 不驗單筆 putString 回傳值）；NVS 可能只更新部分欄位 | 重啟後確認連線行為，若異常重新設定 |

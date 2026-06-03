@@ -12,16 +12,18 @@ ESP32 NMK99 + OV2640 Camera 實現的可獨立運作門口監控系統。整合�
 | 蜂鳴器告警 | 偵測未知訪客時觸發 |
 | Discord 通知 | 啟動 IP 公告、已知使用者回家、未知訪客告警 |
 | 本機 WebUI | 設定、人臉管理、日誌查詢 |
-| Agent 2 協作 | MQTT 交換室內佔用狀態與警報決定 |
+| Agent 2 協作 | MQTT 交換室內佔用狀態與警報決定（Broker 支援 Username/Password 認證） |
 | 離線獨立運作 | Agent 2 離線時自動 ALERT_RED 模式獨立警戒 |
 
 ## 快速開始
 
 ### 1. 需求
 
-- ESP32 NMK99（或 AI Thinker ESP32-CAM 相容板，需 PSRAM）
+- ESP32 NMK99（**推薦**；GPIO 32 之 CAM_PWDN 未接線，可用於 WS2812B）
+  或 AI Thinker ESP32-CAM 相容板（需確認 GPIO 32 的 CAM_PWDN 未接線，否則相機與 LED 衝突）
+- 需要 PSRAM
 - OV2640 Camera
-- WS2812B RGB LED（接 GPIO 32）
+- WS2812B RGB LED（接 GPIO 32，需對應板子上 PWDN 未接線）
 - 霍爾感應器（接 GPIO 33）
 - 壓電蜂鳴器（接 GPIO 13）
 - PlatformIO IDE 或 CLI
@@ -47,6 +49,7 @@ ESP32 NMK99 + OV2640 Camera 實現的可獨立運作門口監控系統。整合�
 4. 裝置重啟後連上 WiFi，Serial 印出 IP
 5. 瀏覽 `http://<裝置IP>/` 或 `http://faceguard.local/`
 6. 預設帳號 `admin`，首次登入需設定密碼
+7. 前往 `/settings` 設定 Discord Webhook、MQTT Broker（含可選 Username/Password）等參數；**MQTT 設定需重啟才套用**
 
 ## 文件索引
 
@@ -82,7 +85,7 @@ faceguard/
 │   ├── SettingsStore/        # 密碼、Discord URL、霍爾閾值 NVS 管理
 │   ├── SessionAuth/          # Session token、CSRF、暴力破解防護
 │   ├── DashboardServer/      # HTTP 路由、PROGMEM HTML、AJAX API
-│   └── LogManager/           # Face/Door/Alert 記憶體環形緩衝日誌
+│   └── LogManager/           # Face/Door/Alert 記憶體環形緩衝 + SPIFFS 月份分頁歷史日誌
 ├── include/
 │   ├── config.h              # 所有計時常數
 │   ├── pins.h                # GPIO 腳位定義
