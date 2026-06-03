@@ -15,42 +15,37 @@ static void appendEscapedJson(String& out, const String& s) {
   }
 }
 
-// Scan nearby networks, deduplicate by SSID (keep strongest RSSI), sort descending.
-// Returns JSON array string (max MAX_SCAN_RESULTS entries), or "" on hardware error.
-// Results are cached for SCAN_CACHE_MS to throttle repeated calls.
+// On-demand WiFi scan with 5 s cooldown (mirrors smart-exit-mat ConfigPortal).
+// scanDelete() is called only AFTER processing results — never before the scan.
+// Returns "[]" on failure so the caller always sends HTTP 200 (not 500).
 static String scanNetworksJson() {
+  static const unsigned long SCAN_COOLDOWN_MS = 5000UL;
   static const int           MAX_RAW          = 64;
-  static const int           MAX_SCAN_RESULTS = 15;
-  static const unsigned long SCAN_CACHE_MS    = 10000;
+  static const int           MAX_RESULTS      = 15;
   static String              s_cached;
   static unsigned long       s_cachedAt       = 0;
 
   unsigned long now = millis();
-  if (s_cachedAt > 0 && (now - s_cachedAt) < SCAN_CACHE_MS) {
+  if (s_cachedAt > 0 && (now - s_cachedAt) < SCAN_COOLDOWN_MS) {
     return s_cached;
   }
+  s_cachedAt = now;  // update before scan so cooldown applies even on failure
 
-  int n = WiFi.scanNetworks(false, false);
+  int n = WiFi.scanNetworks();  // synchronous; no pre-delete
   if (n < 0) {
-    // One retry after a short settle delay (radio may be temporarily busy)
-    Serial.printf("[ConfigPortal] Scan returned %d, retrying...\n", n);
+    Serial.printf("[ConfigPortal] Scan failed (%d).\n", n);
     WiFi.scanDelete();
-    delay(300);
-    n = WiFi.scanNetworks(false, false);
-  }
-  if (n < 0) {
-    Serial.printf("[ConfigPortal] Scan error: %d\n", n);
-    WiFi.scanDelete();
-    return "";  // caller sends HTTP 500
+    s_cached = "[]";
+    return s_cached;
   }
   if (n > MAX_RAW) n = MAX_RAW;
 
-  // Deduplicate: for each SSID keep the index with strongest RSSI
+  // Deduplicate: keep strongest RSSI per SSID
   int idx[MAX_RAW];
   int cnt = 0;
   for (int i = 0; i < n; i++) {
     String ssid = WiFi.SSID(i);
-    if (ssid.length() == 0) continue;  // skip hidden networks
+    if (ssid.length() == 0) continue;
     bool dup = false;
     for (int j = 0; j < cnt; j++) {
       if (WiFi.SSID(idx[j]) == ssid) {
@@ -62,7 +57,7 @@ static String scanNetworksJson() {
     if (!dup) idx[cnt++] = i;
   }
 
-  // Insertion sort descending by RSSI
+  // Sort descending by RSSI
   for (int i = 1; i < cnt; i++) {
     int key = idx[i], j = i - 1;
     while (j >= 0 && WiFi.RSSI(idx[j]) < WiFi.RSSI(key)) {
@@ -72,7 +67,7 @@ static String scanNetworksJson() {
     idx[j + 1] = key;
   }
 
-  if (cnt > MAX_SCAN_RESULTS) cnt = MAX_SCAN_RESULTS;
+  if (cnt > MAX_RESULTS) cnt = MAX_RESULTS;
   Serial.printf("[ConfigPortal] Scan complete: %d network(s) found.\n", cnt);
 
   String json = "[";
@@ -87,8 +82,7 @@ static String scanNetworksJson() {
   json += "]";
 
   WiFi.scanDelete();
-  s_cached   = json;
-  s_cachedAt = now;
+  s_cached = json;
   return json;
 }
 
@@ -203,6 +197,14 @@ bool ConfigPortal::_tryConnect(const String& ssid, const String& pw) {
 }
 
 void ConfigPortal::_runPortal(const char* apName) {
+  // _tryConnect() calls esp_wifi_connect() and times out at the Arduino level,
+  // leaving the IDF STA state machine in CONNECTING. esp_wifi_scan_start()
+  // requires STA to be IDLE; calling disconnect() moves it there before we
+  // change mode. persistent(false) prevents ESP32's own NVS from triggering
+  // a background reconnect in the STA half of AP+STA mode.
+  WiFi.persistent(false);
+  WiFi.disconnect(false, false);  // esp_wifi_disconnect() → STA back to IDLE
+  delay(100);
   // WIFI_AP_STA allows STA scan while AP is active
   WiFi.mode(WIFI_AP_STA);
   if (!WiFi.softAP(apName, "faceguard99")) {
@@ -220,13 +222,8 @@ void ConfigPortal::_runPortal(const char* apName) {
   });
 
   portalServer.on("/scan", HTTP_GET, [&portalServer]() {
-    String json = scanNetworksJson();
-    if (json.length() == 0) {
-      portalServer.send(500, "application/json", "{\"error\":\"scan failed\"}");
-      return;
-    }
     portalServer.sendHeader("Cache-Control", "no-cache");
-    portalServer.send(200, "application/json", json);
+    portalServer.send(200, "application/json", scanNetworksJson());
   });
 
   bool saved = false;
