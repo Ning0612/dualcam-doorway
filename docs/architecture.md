@@ -44,9 +44,10 @@ main.cpp
   │     ├── onKnownConfirmed callback
   │     └── onAlarmCancelled callback
   │
-  ├── AgentComm (MQTT)
+  ├── AgentComm (MQTT, Core 0 背景 task)
   │     ├── onPresence callback ──► SecurityStateMachine
   │     ├── onAlarmDecision callback ──► SecurityStateMachine
+  │     ├── onAlarmCommand callback ──► SecurityStateMachine
   │     └── onConnectionChange callback ──► SecurityStateMachine
   │
   ├── DiscordNotifier     (HTTPS webhook)
@@ -69,13 +70,13 @@ loop() 每次迭代：
 2. CameraAgent::handleStreamClients()  (no-op，已由 task 管理)
 3. DoorSensor::tick()           ADC 採樣、去彈跳 → onDoorChange()
 4. LedController::tick()        閃爍效果更新
-5. AgentComm::tick()            MQTT loop 與重連
+5. BuzzerController::tick()     蜂鳴器計時，到期呼叫 _cancelAlarm()
+6. AgentComm::tick()            排空跨 task 事件佇列，觸發 presence / alarmDecision /
+                                alarmCommand / connChange callbacks
+                                （MQTT loop 與重連在 Core 0 背景 task 執行）
 
-6. CameraAgent::tick()          每 500ms 執行一次人臉偵測
+7. CameraAgent::tick()          每 500ms 執行一次人臉偵測
    └── FaceRecognizer::recognize()  → _lastResult, _lastRunMs
-
-7. 若 _lastResult == FACE_KNOWN（raw）：
-   sm.onFaceKnownRaw(name)    更新 _lastSeenKnownName（門歸因 fallback 用）
 
 8. FaceVoter::update(lastRawResult, lastRawResultMs, now)
    ├── KNOWN_CONFIRMED  → faceVoter.setConfirmedName(FaceRecognizer::getLastMatchName())
@@ -85,15 +86,20 @@ loop() 每次迭代：
                             └── SecurityStateMachine 觸發 onAlert callback
                             注意：持續存在的未知訪客每 FACE_VOTE_WINDOW_MS（10s）重新觸發一次
 
-9. updateLed()                  LED 優先級合成（alarm > GREEN > face detected > off）
+9. 若 lastRawResult == FACE_KNOWN（raw，且 lastRawResultMs < 2×CAMERA_DETECT_INTERVAL_MS）：
+   sm.onFaceKnownRaw(name)    更新 _lastSeenKnownName（門歸因 fallback 用）
 
-10. BuzzerController::tick()    蜂鳴器計時，到期呼叫 _cancelAlarm()
+10. 每 30s：AgentComm::publishStatus(alertLevel, uptime)
 
-11. 每 30s：AgentComm::publishStatus(alertLevel, uptime)
+11. 每 200ms（CAMERA_PUB_INTERVAL_MS）：
+    AgentComm::publishCamera(jpegBuf, jpegLen)  ← 僅在 MQTT 已連線且 Camera 就緒時執行
 
-12. sm.tick()                   決策逾時處理（Yellow alert decision timeout）
-13. handleWifiLoss()            WiFi 斷線監控
-14. handleSerialInput()         Serial 指令處理
+12. sm.tick()                   決策逾時處理（Yellow alert decision timeout，90s）
+
+13. updateLed()                 LED 優先級合成（alarm > GREEN > face detected > off）
+
+14. handleWifiLoss()            WiFi 斷線監控
+15. handleSerialInput()         Serial 指令處理
 ```
 
 ---
@@ -161,13 +167,16 @@ loop() 每次迭代：
 
 - MQTT Broker 未設定時（空字串），`begin()` 為 no-op，`isConnected()` 回傳 false
 - 支援 Broker 認證（Username/Password 儲存於 NVS `mqtt_user`/`mqtt_pw`）；Username 為空時匿名連線
-- MQTT 斷線時每 5s 自動重連，重連後立即重新 subscribe 三個主題
-- 接收 MQTT `home/home_state/presence` → `onPresence(occupied, score)` callback；同時更新 Agent 2 在線計時
-- 接收 MQTT `home/home_state/alarm_decision` → `onAlarmDecision(decision)` callback
-- 接收 MQTT `home/display/status` → 僅印 Serial，不影響警戒邏輯
+- **MQTT loop 與重連在 FreeRTOS task（Core 0，`mqtt_comm`）背景執行**；主 loop() 的 `tick()` 僅排空跨 task 事件佇列並觸發 callback
+- 斷線後每 5s（`MQTT_RECONNECT_MS`）自動重連，重連後立即重新 subscribe 四個主題
+- 主機名稱解析（DNS）在背景 task 中執行；TCP 連線 timeout 限制為 `MQTT_SOCKET_TIMEOUT_S`（3s），防止 Task WDT 觸發
+- 接收 `home/home_state/presence` → `onPresence(occupied, score)` callback；同時更新 Agent 2 在線計時
+- 接收 `home/home_state/alarm_decision` → `onAlarmDecision(decision)` callback（受 `_waitingForDecision` 門控）
+- 接收 `home/home_state/alarm_command` → `onAlarmCommand(decision)` callback（不受門控；驗證 `agent` 為 `AGENT2_ID` 且 timestamp < 5s）
+- 接收 `home/display/status` → 僅印 Serial，不影響警戒邏輯
 - **Agent 2 在線狀態**由 presence heartbeat 到達時間決定（非 MQTT broker 連線狀態）：
   - 首次收到 presence → `onConnectionChange(true)`
-  - AGENT2_OFFLINE_TIMEOUT_MS（15s）無 presence 或 Broker 斷線 → `onConnectionChange(false)`
+  - `AGENT2_OFFLINE_TIMEOUT_MS`（180s / 3 分鐘）無 presence 或 Broker 斷線 → `onConnectionChange(false)`
 
 ### DiscordNotifier
 
@@ -258,7 +267,7 @@ onVoteResult(UNKNOWN_CONFIRMED)
        _decisionStartMs = now
        → 觸發 onAlert callback（main.cpp 負責 MQTT publishAlert、LogManager）
        
-       30s 後無 AlarmDecision → sm.tick() 呼叫 _triggerAlarm()
+       90s（ALARM_DECISION_TIMEOUT_MS）後無 AlarmDecision → sm.tick() 呼叫 _triggerAlarm()
 
 注意：SSM 本身不直接操控硬體或網路；所有外部副作用均透過 callback 由 main.cpp 執行。
 ```
@@ -267,7 +276,7 @@ onVoteResult(UNKNOWN_CONFIRMED)
 
 ```
 sm.tick():
-  if (_waitingForDecision && elapsed >= ALARM_DECISION_TIMEOUT_MS):
+  if (_waitingForDecision && elapsed >= ALARM_DECISION_TIMEOUT_MS):  // 90s
       _triggerAlarm()   ← 視為 Agent 2 未回應 → 預設升為 RED alert
 ```
 
@@ -347,8 +356,9 @@ sm.setOnAlarmCancelled(onAlarmCancelled); // 警報取消（Agent 2 或自動）
 sm.setOnBuzzerSilence(onBuzzerSilence);   // 蜂鳴器靜音（先於 onAlarmCancelled 觸發）
 
 // AgentComm callbacks
-AgentComm::setOnPresence(onPresence);              // MQTT presence 訊息（同步更新 Agent 2 在線狀態）
-AgentComm::setOnAlarmDecision(onAlarmDecision);    // MQTT alarm decision
+AgentComm::setOnPresence(onPresence);              // MQTT presence 訊息（更新 Agent 2 在線狀態）
+AgentComm::setOnAlarmDecision(onAlarmDecision);    // MQTT alarm_decision（受 _waitingForDecision 門控）
+AgentComm::setOnAlarmCommand(onAlarmCommand);      // MQTT alarm_command（無 _waitingForDecision 門控；驗證 agent == AGENT2_ID 且 timestamp < 5s）
 AgentComm::setOnConnectionChange(onAgent2Connection); // Agent 2 在線/離線狀態變更（非 broker 連線）
 
 // DoorSensor callback
@@ -362,13 +372,14 @@ FaceRecognizer::setOnClearCallback([]{ faceVoter.reset(); });
 
 ## FreeRTOS 使用
 
-| Task 名稱 | Stack | 優先權 | 用途 |
-|-----------|-------|--------|------|
-| `boot_notify` | 8192 B | 1 | 開機 Discord 通知（5s 延遲後發送） |
-| `cam_init` | 8192 B | 1 | Camera 非同步初始化 |
-| MJPEG stream task | 4096 B | 5 | MJPEG frame 推送（port 81） |
+| Task 名稱 | Stack | 優先權 | Core | 用途 |
+|-----------|-------|--------|------|------|
+| `boot_notify` | 8192 B | 1 | 任意 | 開機 Discord 通知（5s 延遲後發送，執行後自刪） |
+| `cam_init` | 8192 B | 1 | 任意 | Camera 非同步初始化（執行後自刪） |
+| `mqtt_comm` | 8192 B | 1 | 0 | MQTT loop、重連、DNS 解析、Agent 2 超時監控 |
+| MJPEG stream task | 4096 B | 5 | 任意 | MJPEG frame 推送（port 81） |
 
-> `loop()` 在 Arduino 框架的 `app_main` task 中執行（core 1），stack ≈ 8KB。
+> `loop()` 在 Arduino 框架的 `app_main` task 中執行（Core 1），stack ≈ 8KB。`mqtt_comm` 固定在 Core 0 以避免與主迴圈競爭。
 
 ---
 

@@ -160,10 +160,11 @@ raw > 3150         → DOOR_CLOSED（outer band 外側）
 ### MQTT
 
 ```cpp
-#define MQTT_DEFAULT_PORT         1883
-#define MQTT_RECONNECT_MS         5000UL   // 重連間隔
-#define MQTT_KEEPALIVE_S            60     // Keep-alive 週期
-#define AGENT2_OFFLINE_TIMEOUT_MS 15000UL  // 無 presence → Agent 2 離線判定
+#define MQTT_DEFAULT_PORT           1883
+#define MQTT_RECONNECT_MS           5000UL   // 重連間隔
+#define MQTT_KEEPALIVE_S              60     // Keep-alive 週期
+#define MQTT_SOCKET_TIMEOUT_S          3     // TCP socket op 上限（< FreeRTOS WDT 預設 5s）
+#define AGENT2_OFFLINE_TIMEOUT_MS 180000UL   // 無 presence 3 分鐘 → Agent 2 離線（心跳約 60s）
 ```
 
 ### 霍爾感應器
@@ -179,9 +180,11 @@ raw > 3150         → DOOR_CLOSED（outer band 外側）
 ### Camera
 
 ```cpp
-#define CAMERA_DETECT_INTERVAL_MS   500UL  // 人臉偵測頻率（兩次/秒）
-#define CAMERA_ENROLL_TIMEOUT_MS  10000UL  // enroll 等待逾時
-#define FACE_RECENT_MS           10000UL   // 視為「當前有臉」的時間窗口
+#define CAMERA_DETECT_INTERVAL_MS   500UL   // 人臉偵測頻率（兩次/秒）
+#define CAMERA_ENROLL_TIMEOUT_MS  10000UL   // enroll 等待逾時
+#define FACE_RECENT_MS           10000UL    // 視為「當前有臉」的時間窗口
+#define CAMERA_PUB_INTERVAL_MS     200UL    // MQTT camera snapshot 發布間隔（5fps）
+#define CAMERA_PUB_MAX_BYTES    (48*1024)   // 單幀最大 JPEG 大小，超出不發布
 ```
 
 ### 人臉辨識

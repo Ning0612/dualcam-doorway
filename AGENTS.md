@@ -97,9 +97,9 @@ include/
 4. Otherwise → off
 
 ### MQTT
-- Publish: `home/security/door`, `home/security/face`, `home/security/alert`, `home/security/status`
-- Subscribe: `home/home_state/presence`, `home/home_state/alarm_decision`
-- Agent 2 offline (no presence for 15 s) → ALERT_RED, independent operation
+- Publish: `home/security/door`, `home/security/face`, `home/security/alert`, `home/security/status`, `home/security/camera` (5fps JPEG binary)
+- Subscribe: `home/home_state/presence`, `home/home_state/alarm_decision`, `home/home_state/alarm_command`, `home/display/status`
+- Agent 2 offline (no presence for 180 s / 3 min) → ALERT_RED, independent operation
 
 ---
 

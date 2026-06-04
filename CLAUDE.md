@@ -96,7 +96,7 @@ enum class AlertEvent  { UNKNOWN_VISITOR = 0, USER_RETURNED = 1, BOOT = 2 };
 ### 警報行為
 
 - **Red UNKNOWN_CONFIRMED**：LED 閃爍 + 蜂鳴器 + `notifyWithPhoto()`（`!jpegBuf || jpegLen==0` 或 multipart alloc 失敗時，`notifyWithPhoto()` 內部 fallback `notify()`；photo HTTP 失敗時，main.cpp 外層 `!sent` 亦 fallback 純文字 `notify()`）+ Alert Log
-- **Yellow UNKNOWN_CONFIRMED**：MQTT publish alert → 等 Agent 2 `alarm_decision`（逾時 30 s → TRIGGER_ALARM）
+- **Yellow UNKNOWN_CONFIRMED**：MQTT publish alert → 等 Agent 2 `alarm_decision`（逾時 90 s `ALARM_DECISION_TIMEOUT_MS` → TRIGGER_ALARM）
 - `_cancelAlarm()` = 完整取消（同時觸發 buzzer silence + alarm cancelled callback）
 - `_silenceBuzzer()` ≠ `_cancelAlarm()`，兩者是不同操作
 
@@ -182,7 +182,7 @@ enum class AlertEvent  { UNKNOWN_VISITOR = 0, USER_RETURNED = 1, BOOT = 2 };
 | `HALL_DEFAULT_LOWER/UPPER` | 1000 / 3000 | open zone 預設邊界 |
 | `HALL_HYSTERESIS` | 150 | 死區半寬 |
 | `BUZZER_DURATION_MS` | 60000 | 警報後呼叫 `_cancelAlarm()` |
-| `AGENT2_OFFLINE_TIMEOUT_MS` | 15000 | 無 presence → 離線 |
+| `AGENT2_OFFLINE_TIMEOUT_MS` | 180000 | 無 presence 3 分鐘 → 離線（Agent 2 心跳約 60s） |
 | `ALARM_DECISION_TIMEOUT_MS` | 90000 | Yellow alert 等待 Agent 2（SecurityStateMachine.h） |
 | `KNOWN_GREEN_DURATION_MS` | 60000 | KNOWN_CONFIRMED 保持 GREEN（SecurityStateMachine.h） |
 | `DISCORD_RATE_LIMIT_MS` | 30000 | 同 AlertEvent 最少間隔 |
@@ -227,13 +227,13 @@ enum class AlertEvent  { UNKNOWN_VISITOR = 0, USER_RETURNED = 1, BOOT = 2 };
 ## MQTT Topics
 
 ```
-Publish:   home/security/door | face | alert | status
-Subscribe: home/home_state/presence | alarm_decision | home/display/status
+Publish:   home/security/door | face | alert | status | camera（5fps JPEG）
+Subscribe: home/home_state/presence | alarm_decision | alarm_command | home/display/status
 ```
 
-所有 publish payload 包含 `agent: "agent1"` 與 ISO 8601 UTC `timestamp`（`...Z`）；NTP 未同步時 timestamp 為 `"1970-01-01T00:00:00.000000Z"`。
+JSON 事件 payload（door/face/alert/status）包含 `agent: "FaceGuard"` 與 ISO 8601 UTC `timestamp`（`...Z`）；NTP 未同步時 timestamp 為 `"1970-01-01T00:00:00.000000Z"`。`home/security/camera` 為原始 JPEG binary，無 JSON 欄位。
 
-Agent 2 離線（15 s 無 presence）→ ALERT_RED。完整 payload 格式見 `docs/mqtt.md`。
+Agent 2 離線（180 s / 3 分鐘無 presence）→ ALERT_RED。完整 payload 格式見 `docs/mqtt.md`。
 
 ---
 
