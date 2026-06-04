@@ -27,6 +27,10 @@
 #define MSG_ALERT_TYPE      "alert_type"
 #define MSG_UPTIME          "uptime"
 
+// ── Agent identities ──────────────────────────────────────────────────────────
+#define AGENT1_ID   "FaceGuard"               // this device
+#define AGENT2_ID   "epaper-home-display"    // Agent 2 MQTT client_id
+
 // ── Presence state values ─────────────────────────────────────────────────────
 #define PRESENCE_OCCUPIED   "OCCUPIED"
 #define PRESENCE_UNOCCUPIED "UNOCCUPIED"

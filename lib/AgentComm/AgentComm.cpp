@@ -95,7 +95,7 @@ static String _getTimestamp() {
 }
 
 static void _appendCommonFields(JsonDocument& doc) {
-    doc[MSG_AGENT_ID]  = "agent1";
+    doc[MSG_AGENT_ID]  = AGENT1_ID;
     doc[MSG_TIMESTAMP] = _getTimestamp();
 }
 
@@ -134,7 +134,7 @@ void AgentComm::_onMessage(const char* topic, byte* payload, unsigned int len) {
         // Validate sender and freshness to guard against retained/replayed MQTT messages.
         // alarm_command bypasses _waitingForDecision, so stale retained payloads must be rejected.
         const char* agentId = doc[MSG_AGENT_ID] | "";
-        if (strcmp(agentId, "agent2") != 0) return;
+        if (strcmp(agentId, AGENT2_ID) != 0) return;
         const char* ts = doc[MSG_TIMESTAMP] | "";
         if (!_cmdIsFresh(ts)) {
             Serial.println("[FaceGuard] WARNING: stale alarm_command rejected (retained or replayed)");
