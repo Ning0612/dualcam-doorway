@@ -64,7 +64,9 @@ static void _enqueue(CommEvent ev, bool critical = false) {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-// Returns true if the ISO 8601 UTC timestamp is within maxAgeSec of now.
+// Returns true if the ISO 8601 timestamp is within maxAgeSec of now.
+// Accepts UTC timestamps (with 'Z' suffix) and local-time timestamps (without 'Z').
+// For local-time stamps, converts to UTC using the system timezone set by configTime().
 // When NTP is unavailable (epoch < 2023), skips validation and returns true.
 static bool _cmdIsFresh(const char* isoTs, unsigned maxAgeSec = 5) {
     time_t now = time(nullptr);
@@ -72,6 +74,7 @@ static bool _cmdIsFresh(const char* isoTs, unsigned maxAgeSec = 5) {
 
     int yr, mo, dy, hr, mi, se;
     if (sscanf(isoTs, "%4d-%2d-%2dT%2d:%2d:%2d", &yr, &mo, &dy, &hr, &mi, &se) != 6) return false;
+    if (mo < 1 || mo > 12 || dy < 1 || dy > 31 || hr > 23 || mi > 59 || se > 59) return false;
 
     // Days since Unix epoch using Gregorian calendar formula
     static const uint16_t mdays[] = {0,31,59,90,120,151,181,212,243,273,304,334};
@@ -79,7 +82,31 @@ static bool _cmdIsFresh(const char* isoTs, unsigned maxAgeSec = 5) {
     long d = (long)(yr - 1970) * 365 + (yr - 1969) / 4 - (yr - 1901) / 100 + (yr - 1601) / 400
              + mdays[mo - 1] + (mo > 2 && leap ? 1 : 0) + dy - 1;
     time_t msgEpoch = (time_t)(d * 86400L + hr * 3600L + mi * 60L + se);
-    return labs((long)now - (long)msgEpoch) <= (long)maxAgeSec;
+
+    // Primary: treat as UTC (standard ISO 8601 with 'Z' suffix)
+    if (labs((long)now - (long)msgEpoch) <= (long)maxAgeSec) return true;
+
+    // Fallback: no 'Z' suffix means local time — convert to UTC using system timezone
+    bool hasZ = false;
+    for (const char* p = isoTs; *p; p++) { if (*p == 'Z' || *p == 'z') { hasZ = true; break; } }
+    if (!hasZ) {
+        // Compute local→UTC offset by comparing gmtime and localtime for the same moment.
+        // This avoids tm_gmtoff (GNU extension) and the timezone POSIX global.
+        struct tm gtm, ltm;
+        gmtime_r(&now, &gtm);
+        localtime_r(&now, &ltm);
+        long offset_s = ((long)ltm.tm_hour - gtm.tm_hour) * 3600L
+                      + ((long)ltm.tm_min  - gtm.tm_min)  * 60L
+                      + ((long)ltm.tm_sec  - gtm.tm_sec);
+        int dd = ltm.tm_yday - gtm.tm_yday;
+        if (dd >  1) dd -= 365;  // year boundary: UTC is still last year
+        if (dd < -1) dd += 365;  // year boundary: local is still last year
+        offset_s += (long)dd * 86400L;
+        // local_epoch = utc_epoch + offset_s  =>  utc_epoch = local_epoch - offset_s
+        time_t msgEpochUtc = msgEpoch - (time_t)offset_s;
+        return labs((long)now - (long)msgEpochUtc) <= (long)maxAgeSec;
+    }
+    return false;
 }
 
 static String _getTimestamp() {
@@ -131,22 +158,26 @@ void AgentComm::_onMessage(const char* topic, byte* payload, unsigned int len) {
         _enqueue({2, false, 0, decision}, true);  // alarm_decision: critical
 
     } else if (strcmp(topic, MQTT_TOPIC_ALARM_CMD) == 0) {
-        // Validate sender and freshness to guard against retained/replayed MQTT messages.
-        // alarm_command bypasses _waitingForDecision, so stale retained payloads must be rejected.
+        // Validate sender to guard against commands from unknown agents.
         const char* agentId = doc[MSG_AGENT_ID] | "";
         if (strcmp(agentId, AGENT2_ID) != 0) return;
-        const char* ts = doc[MSG_TIMESTAMP] | "";
-        if (!_cmdIsFresh(ts)) {
-            Serial.println("[FaceGuard] WARNING: stale alarm_command rejected (retained or replayed)");
-            return;
-        }
+
         const char* ad = doc[MSG_ALARM_DECISION] | "";
         AlarmDecision decision = AlarmDecision::NO_ACTION;
         if      (strcmp(ad, ALARM_TRIGGER) == 0) decision = AlarmDecision::TRIGGER_ALARM;
         else if (strcmp(ad, ALARM_CANCEL)  == 0) decision = AlarmDecision::CANCEL_ALARM;
-        if (decision != AlarmDecision::NO_ACTION) {
-            _enqueue({4, false, 0, decision}, true);  // alarm_command: critical, no guard
+        if (decision == AlarmDecision::NO_ACTION) return;
+
+        // Freshness check guards against retained/replayed payloads.
+        // alarm_command bypasses _waitingForDecision, so stale messages must be rejected.
+        // Accepts both UTC ('Z' suffix) and local-time stamps (no suffix) via _cmdIsFresh fallback.
+        const char* ts = doc[MSG_TIMESTAMP] | "";
+        if (!_cmdIsFresh(ts)) {
+            Serial.printf("[FaceGuard] WARNING: stale alarm_command %s rejected (retained or replayed)\n",
+                          decision == AlarmDecision::TRIGGER_ALARM ? "TRIGGER" : "CANCEL");
+            return;
         }
+        _enqueue({4, false, 0, decision}, true);  // alarm_command: critical, no guard
 
     } else if (strcmp(topic, MQTT_TOPIC_DISPLAY_STATUS) == 0) {
         const char* status = doc["status"] | "unknown";

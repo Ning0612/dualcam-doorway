@@ -16,7 +16,7 @@
 #define MQTT_RECONNECT_MS         5000UL  // retry interval when disconnected
 #define MQTT_KEEPALIVE_S            60
 #define MQTT_SOCKET_TIMEOUT_S        3    // TCP socket op limit (< 5 s Task WDT default)
-#define AGENT2_OFFLINE_TIMEOUT_MS 15000UL // no presence message within → Agent 2 offline
+#define AGENT2_OFFLINE_TIMEOUT_MS 180000UL // no presence message within 3 min → Agent 2 offline (Agent 2 heartbeat ~60s)
 
 // Dashboard session
 #define DASHBOARD_SESSION_TTL_MS 1800000UL  // 30 min inactivity
