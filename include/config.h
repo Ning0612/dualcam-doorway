@@ -36,6 +36,8 @@
 
 // Camera Agent
 #define CAMERA_DETECT_INTERVAL_MS   500UL   // face detection rate (twice per second)
+#define CAMERA_PUB_INTERVAL_MS     1000UL   // MQTT camera snapshot rate (1 fps)
+#define CAMERA_PUB_MAX_BYTES       (48 * 1024) // max JPEG size accepted for MQTT publish
 
 // Face Recognition
 // Enrollment window: if no face detected within this period after scheduleEnroll(),

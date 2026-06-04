@@ -34,6 +34,7 @@ LogManager          logManager;
 
 static unsigned long wifiLostMs       = 0;
 static unsigned long lastStatusPubMs  = 0;
+static unsigned long lastCamPubMs     = 0;
 static constexpr unsigned long STATUS_PUB_INTERVAL_MS = 30000UL;
 
 // ── NTP ───────────────────────────────────────────────────────────────────────
@@ -473,6 +474,18 @@ void loop() {
   if (millis() - lastStatusPubMs >= STATUS_PUB_INTERVAL_MS) {
     AgentComm::publishStatus(sm.getAlertLevel(), millis());
     lastStatusPubMs = millis();
+  }
+
+  // 1 fps MQTT camera snapshot — best-effort, drops frame if MQTT busy or camera unavailable
+  if (AgentComm::isConnected() && CameraAgent::isInitialized() &&
+      millis() - lastCamPubMs >= CAMERA_PUB_INTERVAL_MS) {
+    lastCamPubMs = millis();
+    uint8_t* camBuf = nullptr;
+    size_t   camLen = 0;
+    if (CameraAgent::captureJpeg(&camBuf, &camLen)) {
+      AgentComm::publishCamera(camBuf, camLen);
+      free(camBuf);
+    }
   }
 
   sm.tick();

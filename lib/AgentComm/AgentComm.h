@@ -31,6 +31,11 @@ public:
   static bool publishAlert(AlertLevel level, const char* alertType);
   static bool publishStatus(AlertLevel level, unsigned long uptime);
 
+  // Publish a raw JPEG frame to MQTT_TOPIC_CAMERA.
+  // Uses PubSubClient streaming API — not limited by MQTT_MAX_PACKET_SIZE.
+  // Best-effort: returns false (drops frame) if MQTT is busy or disconnected.
+  static bool publishCamera(const uint8_t* buf, size_t len);
+
   // ── Subscribe callbacks (set before begin()) ──────────────────────────────
   // Called when a valid presence message arrives from Agent 2.
   static void setOnPresence(void (*cb)(bool occupied, int score));

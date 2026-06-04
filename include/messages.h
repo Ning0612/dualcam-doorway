@@ -5,6 +5,7 @@
 #define MQTT_TOPIC_FACE     "home/security/face"
 #define MQTT_TOPIC_ALERT    "home/security/alert"
 #define MQTT_TOPIC_STATUS   "home/security/status"
+#define MQTT_TOPIC_CAMERA   "home/security/camera"
 
 // ── MQTT topics (FaceGuard subscribe) ────────────────────────────────────────
 #define MQTT_TOPIC_PRESENCE       "home/home_state/presence"

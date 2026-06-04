@@ -242,6 +242,42 @@ bool AgentComm::_publish(const char* topic, const String& payload) {
     return r;
 }
 
+// ── Binary publish for camera frames (called from main task) ─────────────────
+//
+// Uses PubSubClient beginPublish/write/endPublish streaming path, which bypasses
+// the MQTT_MAX_PACKET_SIZE limit that would reject 10-30 KB JPEG payloads.
+// Mutex timeout is 50 ms: camera publish is low-priority, so we drop the frame
+// rather than stall the main loop while the MQTT task is reconnecting.
+
+bool AgentComm::publishCamera(const uint8_t* buf, size_t len) {
+    if (!buf || len == 0 || len > CAMERA_PUB_MAX_BYTES) return false;
+
+    portENTER_CRITICAL(&_brokerStateMux);
+    bool connected = _brokerConnected;
+    portEXIT_CRITICAL(&_brokerStateMux);
+    if (!connected) return false;
+
+    if (xSemaphoreTake(_mqttMutex, pdMS_TO_TICKS(50)) != pdTRUE) return false;
+
+    bool ok = _mqtt.beginPublish(MQTT_TOPIC_CAMERA, len, false);
+    if (ok) {
+        const size_t kChunk = 1024;
+        size_t offset = 0;
+        while (ok && offset < len) {
+            size_t toWrite = min(kChunk, len - offset);
+            if (_mqtt.write(buf + offset, toWrite) != toWrite) {
+                ok = false;
+            } else {
+                offset += toWrite;
+            }
+        }
+        if (!_mqtt.endPublish()) ok = false;
+    }
+
+    xSemaphoreGive(_mqttMutex);
+    return ok;
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 void AgentComm::begin(const char* broker, uint16_t port,
