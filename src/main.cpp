@@ -484,10 +484,8 @@ void loop() {
     lastStatusPubMs = millis();
   }
 
-  // 5 fps MQTT camera snapshot — best-effort; skips during active alarm or pending decision
-  // to avoid blocking the security loop with JPEG conversion at critical moments.
+  // 5 fps MQTT camera snapshot — best-effort, drops frame if MQTT busy or camera unavailable
   if (AgentComm::isConnected() && CameraAgent::isInitialized() &&
-      !sm.isAlarmActive() && !sm.isWaitingForDecision() &&
       millis() - lastCamPubMs >= CAMERA_PUB_INTERVAL_MS) {
     lastCamPubMs = millis();
     uint8_t* camBuf = nullptr;

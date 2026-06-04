@@ -54,8 +54,7 @@ public:
   DoorState   getDoorState()     const { return _doorState; }
   FaceState   getFaceState()     const { return _faceState; }
   bool        isAgent2Online()   const { return _agent2Online; }
-  bool        isAlarmActive()          const { return _alarmActive; }
-  bool        isWaitingForDecision()   const { return _waitingForDecision; }
+  bool        isAlarmActive()    const { return _alarmActive; }
   bool        isBuzzerActive()   const { return _buzzerActive; }
   const char* getLastKnownUser() const { return _lastKnownUser; }
 
