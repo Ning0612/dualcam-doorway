@@ -10,6 +10,7 @@
 // ── MQTT topics (FaceGuard subscribe) ────────────────────────────────────────
 #define MQTT_TOPIC_PRESENCE       "home/home_state/presence"
 #define MQTT_TOPIC_ALARM          "home/home_state/alarm_decision"
+#define MQTT_TOPIC_ALARM_CMD      "home/home_state/alarm_command"
 #define MQTT_TOPIC_DISPLAY_STATUS "home/display/status"
 
 // ── JSON field keys (MQTT payloads) ──────────────────────────────────────────

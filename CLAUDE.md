@@ -183,7 +183,7 @@ enum class AlertEvent  { UNKNOWN_VISITOR = 0, USER_RETURNED = 1, BOOT = 2 };
 | `HALL_HYSTERESIS` | 150 | 死區半寬 |
 | `BUZZER_DURATION_MS` | 60000 | 警報後呼叫 `_cancelAlarm()` |
 | `AGENT2_OFFLINE_TIMEOUT_MS` | 15000 | 無 presence → 離線 |
-| `ALARM_DECISION_TIMEOUT_MS` | 30000 | Yellow alert 等待 Agent 2（SecurityStateMachine.h） |
+| `ALARM_DECISION_TIMEOUT_MS` | 90000 | Yellow alert 等待 Agent 2（SecurityStateMachine.h） |
 | `KNOWN_GREEN_DURATION_MS` | 60000 | KNOWN_CONFIRMED 保持 GREEN（SecurityStateMachine.h） |
 | `DISCORD_RATE_LIMIT_MS` | 30000 | 同 AlertEvent 最少間隔 |
 | `DISCORD_FAIL_COOLDOWN_MS` | 300000 | 連線失敗後封鎖 |

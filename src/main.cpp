@@ -164,6 +164,13 @@ static void onAlarmDecision(AlarmDecision decision) {
   sm.onAlarmDecision(decision);
 }
 
+static void onAlarmCommand(AlarmDecision decision) {
+  const char* dstr = (decision == AlarmDecision::TRIGGER_ALARM) ? "TRIGGER_ALARM" :
+                     (decision == AlarmDecision::CANCEL_ALARM)  ? "CANCEL_ALARM"  : "NO_ACTION";
+  Serial.printf("[FaceGuard] alarm_command: %s (Agent2 proactive)\n", dstr);
+  sm.onAlarmCommand(decision);
+}
+
 static void onAgent2Connection(bool connected) {
   Serial.printf("[FaceGuard] Agent2 presence %s\n", connected ? "online" : "offline");
   sm.onAgent2Online(connected);
@@ -398,6 +405,7 @@ void setup() {
   // MQTT (may be unconfigured; AgentComm handles empty broker gracefully)
   AgentComm::setOnPresence(onPresence);
   AgentComm::setOnAlarmDecision(onAlarmDecision);
+  AgentComm::setOnAlarmCommand(onAlarmCommand);
   AgentComm::setOnConnectionChange(onAgent2Connection);
   AgentComm::begin(ConfigManager::getMqttBroker().c_str(), ConfigManager::getMqttPort(),
                    ConfigManager::getMqttUsername().c_str(), ConfigManager::getMqttPassword().c_str());
@@ -476,8 +484,10 @@ void loop() {
     lastStatusPubMs = millis();
   }
 
-  // 1 fps MQTT camera snapshot — best-effort, drops frame if MQTT busy or camera unavailable
+  // 5 fps MQTT camera snapshot — best-effort; skips during active alarm or pending decision
+  // to avoid blocking the security loop with JPEG conversion at critical moments.
   if (AgentComm::isConnected() && CameraAgent::isInitialized() &&
+      !sm.isAlarmActive() && !sm.isWaitingForDecision() &&
       millis() - lastCamPubMs >= CAMERA_PUB_INTERVAL_MS) {
     lastCamPubMs = millis();
     uint8_t* camBuf = nullptr;

@@ -38,6 +38,7 @@ static unsigned long _lastPresenceMs = 0;
 
 static void (*_onPresence)(bool, int)          = nullptr;
 static void (*_onAlarmDecision)(AlarmDecision) = nullptr;
+static void (*_onAlarmCommand)(AlarmDecision)  = nullptr;
 static void (*_onConnChange)(bool)             = nullptr;
 
 // ── Cross-task event queue (MQTT task → main task) ────────────────────────────
@@ -62,6 +63,24 @@ static void _enqueue(CommEvent ev, bool critical = false) {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+// Returns true if the ISO 8601 UTC timestamp is within maxAgeSec of now.
+// When NTP is unavailable (epoch < 2023), skips validation and returns true.
+static bool _cmdIsFresh(const char* isoTs, unsigned maxAgeSec = 5) {
+    time_t now = time(nullptr);
+    if (now < 1700000000UL) return true;  // NTP not synced — cannot validate
+
+    int yr, mo, dy, hr, mi, se;
+    if (sscanf(isoTs, "%4d-%2d-%2dT%2d:%2d:%2d", &yr, &mo, &dy, &hr, &mi, &se) != 6) return false;
+
+    // Days since Unix epoch using Gregorian calendar formula
+    static const uint16_t mdays[] = {0,31,59,90,120,151,181,212,243,273,304,334};
+    bool leap = (yr % 4 == 0 && yr % 100 != 0) || yr % 400 == 0;
+    long d = (long)(yr - 1970) * 365 + (yr - 1969) / 4 - (yr - 1901) / 100 + (yr - 1601) / 400
+             + mdays[mo - 1] + (mo > 2 && leap ? 1 : 0) + dy - 1;
+    time_t msgEpoch = (time_t)(d * 86400L + hr * 3600L + mi * 60L + se);
+    return labs((long)now - (long)msgEpoch) <= (long)maxAgeSec;
+}
 
 static String _getTimestamp() {
     time_t now = time(nullptr);
@@ -109,7 +128,25 @@ void AgentComm::_onMessage(const char* topic, byte* payload, unsigned int len) {
         AlarmDecision decision = AlarmDecision::NO_ACTION;
         if      (strcmp(ad, ALARM_TRIGGER) == 0) decision = AlarmDecision::TRIGGER_ALARM;
         else if (strcmp(ad, ALARM_CANCEL)  == 0) decision = AlarmDecision::CANCEL_ALARM;
-        _enqueue({2, false, 0, decision}, true);  // alarm: critical
+        _enqueue({2, false, 0, decision}, true);  // alarm_decision: critical
+
+    } else if (strcmp(topic, MQTT_TOPIC_ALARM_CMD) == 0) {
+        // Validate sender and freshness to guard against retained/replayed MQTT messages.
+        // alarm_command bypasses _waitingForDecision, so stale retained payloads must be rejected.
+        const char* agentId = doc[MSG_AGENT_ID] | "";
+        if (strcmp(agentId, "agent2") != 0) return;
+        const char* ts = doc[MSG_TIMESTAMP] | "";
+        if (!_cmdIsFresh(ts)) {
+            Serial.println("[FaceGuard] WARNING: stale alarm_command rejected (retained or replayed)");
+            return;
+        }
+        const char* ad = doc[MSG_ALARM_DECISION] | "";
+        AlarmDecision decision = AlarmDecision::NO_ACTION;
+        if      (strcmp(ad, ALARM_TRIGGER) == 0) decision = AlarmDecision::TRIGGER_ALARM;
+        else if (strcmp(ad, ALARM_CANCEL)  == 0) decision = AlarmDecision::CANCEL_ALARM;
+        if (decision != AlarmDecision::NO_ACTION) {
+            _enqueue({4, false, 0, decision}, true);  // alarm_command: critical, no guard
+        }
 
     } else if (strcmp(topic, MQTT_TOPIC_DISPLAY_STATUS) == 0) {
         const char* status = doc["status"] | "unknown";
@@ -201,6 +238,7 @@ void AgentComm::_mqttTaskFn(void*) {
                 if (ok) {
                     _mqtt.subscribe(MQTT_TOPIC_PRESENCE);
                     _mqtt.subscribe(MQTT_TOPIC_ALARM);
+                    _mqtt.subscribe(MQTT_TOPIC_ALARM_CMD);
                     _mqtt.subscribe(MQTT_TOPIC_DISPLAY_STATUS);
                 }
                 int rc = ok ? 0 : _mqtt.state();
@@ -324,6 +362,9 @@ void AgentComm::tick() {
                 Serial.printf("[FaceGuard] Agent2 presence %s\n", ev.boolVal ? "online" : "offline");
                 if (_onConnChange) _onConnChange(ev.boolVal);
                 break;
+            case 4:
+                if (_onAlarmCommand) _onAlarmCommand(ev.alarm);
+                break;
         }
     }
 }
@@ -370,6 +411,7 @@ bool AgentComm::publishStatus(AlertLevel level, unsigned long uptime) {
 
 void AgentComm::setOnPresence(void (*cb)(bool, int))          { _onPresence      = cb; }
 void AgentComm::setOnAlarmDecision(void (*cb)(AlarmDecision)) { _onAlarmDecision = cb; }
+void AgentComm::setOnAlarmCommand(void (*cb)(AlarmDecision))  { _onAlarmCommand  = cb; }
 void AgentComm::setOnConnectionChange(void (*cb)(bool))       { _onConnChange    = cb; }
 
 bool AgentComm::isConnected() {

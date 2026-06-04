@@ -43,6 +43,11 @@ public:
   // Called when a valid alarm_decision message arrives from Agent 2.
   static void setOnAlarmDecision(void (*cb)(AlarmDecision decision));
 
+  // Called when Agent 2 sends a proactive alarm_command (TRIGGER or CANCEL).
+  // Unlike alarm_decision, this is NOT guarded by _waitingForDecision — it
+  // always takes effect regardless of current state.
+  static void setOnAlarmCommand(void (*cb)(AlarmDecision decision));
+
   // Called when Agent 2 presence online state changes (online = true/false).
   // Fires true on first presence heartbeat after offline; fires false on presence
   // timeout (AGENT2_OFFLINE_TIMEOUT_MS) or MQTT broker disconnect.

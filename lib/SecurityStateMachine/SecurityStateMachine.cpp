@@ -134,6 +134,19 @@ void SecurityStateMachine::onAlarmDecision(AlarmDecision d) {
   // NO_ACTION: leave current state
 }
 
+void SecurityStateMachine::onAlarmCommand(AlarmDecision d) {
+  if (d == AlarmDecision::TRIGGER_ALARM) {
+    _waitingForDecision = false;
+    _triggerAlarm();
+  } else if (d == AlarmDecision::CANCEL_ALARM) {
+    if (_waitingForDecision) {
+      Serial.println("[FaceGuard] alarm_command CANCEL: Agent2 judged safe — clearing pending decision");
+    }
+    _waitingForDecision = false;
+    _cancelAlarm();  // no-op if alarm not yet active
+  }
+}
+
 void SecurityStateMachine::onAgent2Online(bool online) {
   if (_agent2Online == online) return;
   _agent2Online = online;

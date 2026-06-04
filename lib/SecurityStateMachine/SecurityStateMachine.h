@@ -22,7 +22,7 @@
 //   B. Door closes while alarm is active
 //   C. KNOWN_CONFIRMED vote received while alarm is active
 
-static constexpr unsigned long ALARM_DECISION_TIMEOUT_MS = 30000UL;
+static constexpr unsigned long ALARM_DECISION_TIMEOUT_MS = 90000UL;
 static constexpr unsigned long KNOWN_GREEN_DURATION_MS   = 60000UL;
 
 class SecurityStateMachine {
@@ -32,6 +32,10 @@ public:
   void onDoorChange(DoorState state);
   void onPresence(bool occupied);
   void onAlarmDecision(AlarmDecision d);
+
+  // Proactive command from Agent 2: TRIGGER or CANCEL with no _waitingForDecision guard.
+  // TRIGGER always starts the alarm; CANCEL always stops it (no-op if already inactive).
+  void onAlarmCommand(AlarmDecision d);
   void onAgent2Online(bool online);
 
   // Call each loop() when raw face result is KNOWN (before FaceVoter voting).
@@ -50,7 +54,8 @@ public:
   DoorState   getDoorState()     const { return _doorState; }
   FaceState   getFaceState()     const { return _faceState; }
   bool        isAgent2Online()   const { return _agent2Online; }
-  bool        isAlarmActive()    const { return _alarmActive; }
+  bool        isAlarmActive()          const { return _alarmActive; }
+  bool        isWaitingForDecision()   const { return _waitingForDecision; }
   bool        isBuzzerActive()   const { return _buzzerActive; }
   const char* getLastKnownUser() const { return _lastKnownUser; }
 
