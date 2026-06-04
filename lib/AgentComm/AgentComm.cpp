@@ -5,6 +5,10 @@
 #include <WiFiClient.h>
 #include <ArduinoJson.h>
 #include <time.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <freertos/queue.h>
+#include <freertos/semphr.h>
 
 // ── Static storage ────────────────────────────────────────────────────────────
 
@@ -18,107 +22,224 @@ static char     _pass[64]     = {};
 static char     _clientId[24] = "faceguard";
 static bool     _configured   = false;
 
-static unsigned long _lastReconnectMs = 0;
-static bool _brokerConnected          = false;
+static IPAddress _brokerIP;
+static bool      _brokerIPResolved = false;
+static uint8_t   _connectFailCount = 0;
 
-// Agent 2 online state is tracked via presence heartbeat freshness,
-// NOT by MQTT broker connection. Broker online ≠ Agent 2 online.
-static bool          _agent2Online    = false;
-static unsigned long _lastPresenceMs  = 0;
+// _brokerConnected: written by MQTT task, read by isConnected() on main task.
+// portMUX_TYPE critical section guarantees cross-core visibility on ESP32.
+static portMUX_TYPE  _brokerStateMux  = portMUX_INITIALIZER_UNLOCKED;
+static bool          _brokerConnected = false;
 
-static void (*_onPresence)(bool, int)       = nullptr;
+// _agent2Online / _lastPresenceMs: owned exclusively by the MQTT task.
+// Main task learns of state changes only through _eventQueue events.
+static bool          _agent2Online   = false;
+static unsigned long _lastPresenceMs = 0;
+
+static void (*_onPresence)(bool, int)          = nullptr;
 static void (*_onAlarmDecision)(AlarmDecision) = nullptr;
-static void (*_onConnChange)(bool)          = nullptr;
+static void (*_onConnChange)(bool)             = nullptr;
+
+// ── Cross-task event queue (MQTT task → main task) ────────────────────────────
+
+struct CommEvent {
+    uint8_t       type;    // 1=presence, 2=alarm, 3=conn_change
+    bool          boolVal; // presence: occupied; conn_change: online
+    int           intVal;  // presence: score
+    AlarmDecision alarm;
+};
+
+static QueueHandle_t     _eventQueue = nullptr;
+static SemaphoreHandle_t _mqttMutex  = nullptr;
+static TaskHandle_t      _mqttTask   = nullptr;
+
+// critical=true: log a warning if the queue is full (alarm and conn_change events).
+static void _enqueue(CommEvent ev, bool critical = false) {
+    if (!_eventQueue) return;
+    if (xQueueSend(_eventQueue, &ev, 0) != pdTRUE && critical) {
+        Serial.printf("[FaceGuard] WARNING: AgentComm event queue full (type=%u dropped)\n", ev.type);
+    }
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 static String _getTimestamp() {
-  time_t now = time(nullptr);
-  if (now < 1700000000UL) {
-    // NTP not synced: use epoch-0 sentinel to keep valid ISO 8601 schema
-    return String("1970-01-01T00:00:00.000000Z");
-  }
-  struct tm t;
-  gmtime_r(&now, &t);  // UTC so Z suffix is correct
-  char buf[28];
-  strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S.000000Z", &t);
-  return String(buf);
+    time_t now = time(nullptr);
+    if (now < 1700000000UL) {
+        return String("1970-01-01T00:00:00.000000Z");
+    }
+    struct tm t;
+    gmtime_r(&now, &t);
+    char buf[28];
+    strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S.000000Z", &t);
+    return String(buf);
 }
 
 static void _appendCommonFields(JsonDocument& doc) {
-  doc[MSG_AGENT_ID]  = "agent1";
-  doc[MSG_TIMESTAMP] = _getTimestamp();
+    doc[MSG_AGENT_ID]  = "agent1";
+    doc[MSG_TIMESTAMP] = _getTimestamp();
 }
 
-// ── MQTT message handler ──────────────────────────────────────────────────────
+// ── MQTT message handler (runs inside _mqtt.loop(), holds _mqttMutex) ────────
 
 void AgentComm::_onMessage(const char* topic, byte* payload, unsigned int len) {
-  if (len == 0 || len > 512) return;
+    if (len == 0 || len > 512) return;
 
-  char buf[513];
-  memcpy(buf, payload, len);
-  buf[len] = '\0';
+    char buf[513];
+    memcpy(buf, payload, len);
+    buf[len] = '\0';
 
-  JsonDocument doc;
-  if (deserializeJson(doc, buf) != DeserializationError::Ok) return;
+    JsonDocument doc;
+    if (deserializeJson(doc, buf) != DeserializationError::Ok) return;
 
-  if (strcmp(topic, MQTT_TOPIC_PRESENCE) == 0) {
-    const char* ps = doc[MSG_PRESENCE_STATE] | "";
-    bool occupied  = (strcmp(ps, PRESENCE_OCCUPIED) == 0);
-    int  score     = doc[MSG_PRESENCE_SCORE] | 0;
+    if (strcmp(topic, MQTT_TOPIC_PRESENCE) == 0) {
+        const char* ps = doc[MSG_PRESENCE_STATE] | "";
+        bool occupied  = (strcmp(ps, PRESENCE_OCCUPIED) == 0);
+        int  score     = doc[MSG_PRESENCE_SCORE] | 0;
 
-    // Update Agent 2 freshness and fire connection change if state flipped
-    _lastPresenceMs = millis();
-    if (!_agent2Online) {
-      _agent2Online = true;
-      if (_onConnChange) _onConnChange(true);
+        _lastPresenceMs = millis();
+        if (!_agent2Online) {
+            _agent2Online = true;
+            _enqueue({3, true, 0, AlarmDecision::NO_ACTION}, true);  // conn_change: online
+        }
+        _enqueue({1, occupied, score, AlarmDecision::NO_ACTION});    // presence (droppable)
+
+    } else if (strcmp(topic, MQTT_TOPIC_ALARM) == 0) {
+        const char* ad = doc[MSG_ALARM_DECISION] | "";
+        AlarmDecision decision = AlarmDecision::NO_ACTION;
+        if      (strcmp(ad, ALARM_TRIGGER) == 0) decision = AlarmDecision::TRIGGER_ALARM;
+        else if (strcmp(ad, ALARM_CANCEL)  == 0) decision = AlarmDecision::CANCEL_ALARM;
+        _enqueue({2, false, 0, decision}, true);  // alarm: critical
+
+    } else if (strcmp(topic, MQTT_TOPIC_DISPLAY_STATUS) == 0) {
+        const char* status = doc["status"] | "unknown";
+        Serial.printf("[FaceGuard] display/status: %s\n", status);
     }
-
-    if (_onPresence) _onPresence(occupied, score);
-
-  } else if (strcmp(topic, MQTT_TOPIC_ALARM) == 0) {
-    if (!_onAlarmDecision) return;
-    const char* ad = doc[MSG_ALARM_DECISION] | "";
-    AlarmDecision decision = AlarmDecision::NO_ACTION;
-    if      (strcmp(ad, ALARM_TRIGGER) == 0) decision = AlarmDecision::TRIGGER_ALARM;
-    else if (strcmp(ad, ALARM_CANCEL)  == 0) decision = AlarmDecision::CANCEL_ALARM;
-    _onAlarmDecision(decision);
-
-  } else if (strcmp(topic, MQTT_TOPIC_DISPLAY_STATUS) == 0) {
-    const char* status = doc["status"] | "unknown";
-    Serial.printf("[FaceGuard] display/status: %s\n", status);
-  }
 }
 
-// ── Reconnect ─────────────────────────────────────────────────────────────────
+// ── MQTT background task (Core 0) ─────────────────────────────────────────────
+//
+// Owns all PubSubClient access. The _mqttMutex gate lets _publish() on the main
+// task safely interleave without blocking the loop() for DNS-resolution delays.
 
-void AgentComm::_reconnect() {
-  if (!_configured || WiFi.status() != WL_CONNECTED) return;
-  if (millis() - _lastReconnectMs < MQTT_RECONNECT_MS) return;
-  _lastReconnectMs = millis();
+void AgentComm::_mqttTaskFn(void*) {
+    unsigned long lastReconnectMs   = 0;
+    bool          prevWifiConnected = false;
 
-  Serial.printf("[FaceGuard] MQTT connecting to %s:%u (user=%s)...\n",
-                _broker, _port, _user[0] ? _user : "(none)");
-  bool ok = _user[0] ? _mqtt.connect(_clientId, _user, _pass)
-                     : _mqtt.connect(_clientId);
-  if (ok) {
-    Serial.println("[FaceGuard] MQTT connected");
-    _mqtt.subscribe(MQTT_TOPIC_PRESENCE);
-    _mqtt.subscribe(MQTT_TOPIC_ALARM);
-    _mqtt.subscribe(MQTT_TOPIC_DISPLAY_STATUS);
-    _brokerConnected = true;
-    // Agent 2 online state is determined by presence heartbeats, not broker connect.
-    // _onConnChange is NOT fired here; wait for the first presence message.
-  } else {
-    Serial.printf("[FaceGuard] MQTT connect failed (rc=%d)\n", _mqtt.state());
-  }
+    while (true) {
+        bool wifiNow = (WiFi.status() == WL_CONNECTED);
+
+        // WiFi just reconnected: invalidate DNS cache (new network may have different IP/mDNS)
+        if (wifiNow && !prevWifiConnected) {
+            _brokerIPResolved = false;
+            _connectFailCount = 0;
+        }
+        prevWifiConnected = wifiNow;
+
+        if (!_configured || !wifiNow) {
+            vTaskDelay(pdMS_TO_TICKS(500));
+            continue;
+        }
+
+        xSemaphoreTake(_mqttMutex, portMAX_DELAY);
+        bool connected = _mqtt.connected();
+        if (connected) {
+            _mqtt.loop();  // may call _onMessage → _enqueue (safe while holding mutex)
+        }
+        xSemaphoreGive(_mqttMutex);
+
+        if (connected) {
+            // Agent 2 timeout — state owned by this task, no cross-core sync needed
+            if (_agent2Online && _lastPresenceMs != 0 &&
+                (millis() - _lastPresenceMs) >= AGENT2_OFFLINE_TIMEOUT_MS) {
+                _agent2Online = false;
+                Serial.println("[FaceGuard] WARNING: Agent 2 presence timeout — marking offline");
+                _enqueue({3, false, 0, AlarmDecision::NO_ACTION}, true);
+            }
+        } else {
+            // Update cached broker flag (read by isConnected() on main task)
+            portENTER_CRITICAL(&_brokerStateMux);
+            bool wasConnected = _brokerConnected;
+            _brokerConnected  = false;
+            portEXIT_CRITICAL(&_brokerStateMux);
+
+            if (wasConnected) {
+                Serial.println("[FaceGuard] MQTT disconnected");
+                if (_agent2Online) {
+                    _agent2Online = false;
+                    _enqueue({3, false, 0, AlarmDecision::NO_ACTION}, true);
+                }
+            }
+
+            if (millis() - lastReconnectMs >= MQTT_RECONNECT_MS) {
+                lastReconnectMs = millis();
+
+                // Pre-resolve hostname to IP outside the mutex.
+                // mDNS query uses a FreeRTOS semaphore internally, so this call properly
+                // blocks the task (BLOCKED state) and lets IDLE0 run and feed the WDT.
+                // Separating DNS from TCP connect ensures connect() never does mDNS,
+                // limiting its blocking time to MQTT_SOCKET_TIMEOUT_S seconds.
+                if (!_brokerIPResolved) {
+                    Serial.printf("[FaceGuard] MQTT resolving %s...\n", _broker);
+                    bool resolved = (WiFi.hostByName(_broker, _brokerIP) == 1);
+                    if (!resolved) {
+                        Serial.printf("[FaceGuard] MQTT DNS failed for %s\n", _broker);
+                        continue;
+                    }
+                    _brokerIPResolved = true;
+                    xSemaphoreTake(_mqttMutex, portMAX_DELAY);
+                    _mqtt.setServer(_brokerIP, _port);
+                    xSemaphoreGive(_mqttMutex);
+                }
+
+                Serial.printf("[FaceGuard] MQTT connecting to %s:%u (user=%s)...\n",
+                              _broker, _port, _user[0] ? _user : "(none)");
+
+                xSemaphoreTake(_mqttMutex, portMAX_DELAY);
+                bool ok = _user[0] ? _mqtt.connect(_clientId, _user, _pass)
+                                   : _mqtt.connect(_clientId);
+                if (ok) {
+                    _mqtt.subscribe(MQTT_TOPIC_PRESENCE);
+                    _mqtt.subscribe(MQTT_TOPIC_ALARM);
+                    _mqtt.subscribe(MQTT_TOPIC_DISPLAY_STATUS);
+                }
+                int rc = ok ? 0 : _mqtt.state();
+                xSemaphoreGive(_mqttMutex);
+
+                if (ok) {
+                    _connectFailCount = 0;
+                    Serial.println("[FaceGuard] MQTT connected");
+                    portENTER_CRITICAL(&_brokerStateMux);
+                    _brokerConnected = true;
+                    portEXIT_CRITICAL(&_brokerStateMux);
+                } else {
+                    // Force DNS re-resolve after repeated failures in case broker changed IP
+                    if (++_connectFailCount >= 5) {
+                        _brokerIPResolved = false;
+                        _connectFailCount = 0;
+                    }
+                    Serial.printf("[FaceGuard] MQTT connect failed (rc=%d)\n", rc);
+                }
+            }
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
 }
 
-// ── Publish helper ────────────────────────────────────────────────────────────
+// ── Publish helper (called from main task) ────────────────────────────────────
 
 bool AgentComm::_publish(const char* topic, const String& payload) {
-  if (!_mqtt.connected()) return false;
-  return _mqtt.publish(topic, payload.c_str());
+    portENTER_CRITICAL(&_brokerStateMux);
+    bool connected = _brokerConnected;
+    portEXIT_CRITICAL(&_brokerStateMux);
+    if (!connected) return false;
+
+    // 100 ms timeout: returns false if MQTT task holds the lock during DNS/connect
+    if (xSemaphoreTake(_mqttMutex, pdMS_TO_TICKS(100)) != pdTRUE) return false;
+    bool r = _mqtt.publish(topic, payload.c_str());
+    xSemaphoreGive(_mqttMutex);
+    return r;
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -126,91 +247,98 @@ bool AgentComm::_publish(const char* topic, const String& payload) {
 void AgentComm::begin(const char* broker, uint16_t port,
                       const char* username, const char* password,
                       const char* clientId) {
-  if (!broker || strlen(broker) == 0) {
-    Serial.println("[FaceGuard] MQTT broker not configured — AgentComm disabled");
-    return;
-  }
-  strncpy(_broker,   broker,   sizeof(_broker)   - 1);
-  strncpy(_clientId, clientId, sizeof(_clientId) - 1);
-  strncpy(_user, username ? username : "", sizeof(_user) - 1);
-  strncpy(_pass, password ? password : "", sizeof(_pass) - 1);
-  _port       = port;
-  _configured = true;
+    if (!broker || strlen(broker) == 0) {
+        Serial.println("[FaceGuard] MQTT broker not configured — AgentComm disabled");
+        return;
+    }
+    if (_mqttTask != nullptr) return;  // guard against double-init
 
-  _mqtt.setServer(_broker, _port);
-  _mqtt.setKeepAlive(MQTT_KEEPALIVE_S);
-  _mqtt.setCallback(_onMessage);
+    strncpy(_broker,   broker,   sizeof(_broker)   - 1);
+    strncpy(_clientId, clientId, sizeof(_clientId) - 1);
+    strncpy(_user, username ? username : "", sizeof(_user) - 1);
+    strncpy(_pass, password ? password : "", sizeof(_pass) - 1);
+    _port       = port;
+    _configured = true;
+
+    _mqtt.setServer(_broker, _port);
+    _mqtt.setKeepAlive(MQTT_KEEPALIVE_S);
+    _mqtt.setSocketTimeout(MQTT_SOCKET_TIMEOUT_S);
+    _mqtt.setCallback(_onMessage);
+
+    _mqttMutex  = xSemaphoreCreateMutex();
+    _eventQueue = xQueueCreate(12, sizeof(CommEvent));
+
+    xTaskCreatePinnedToCore(_mqttTaskFn, "mqtt_comm", 8192, nullptr, 1, &_mqttTask, 0);
+    Serial.println("[FaceGuard] MQTT task started (Core 0)");
 }
 
 void AgentComm::tick() {
-  if (!_configured) return;
+    if (!_configured || !_eventQueue) return;
 
-  if (_mqtt.connected()) {
-    _mqtt.loop();
-    _brokerConnected = true;
-
-    // Agent 2 presence timeout: broker connected but no heartbeat within window
-    if (_agent2Online && _lastPresenceMs != 0 &&
-        (millis() - _lastPresenceMs) >= AGENT2_OFFLINE_TIMEOUT_MS) {
-      _agent2Online = false;
-      Serial.println("[FaceGuard] WARNING: Agent 2 presence timeout — marking offline");
-      if (_onConnChange) _onConnChange(false);
+    CommEvent ev;
+    while (xQueueReceive(_eventQueue, &ev, 0) == pdTRUE) {
+        switch (ev.type) {
+            case 1:
+                if (_onPresence) _onPresence(ev.boolVal, ev.intVal);
+                break;
+            case 2:
+                if (_onAlarmDecision) _onAlarmDecision(ev.alarm);
+                break;
+            case 3:
+                Serial.printf("[FaceGuard] Agent2 presence %s\n", ev.boolVal ? "online" : "offline");
+                if (_onConnChange) _onConnChange(ev.boolVal);
+                break;
+        }
     }
-  } else {
-    if (_brokerConnected) {
-      _brokerConnected = false;
-      Serial.println("[FaceGuard] MQTT disconnected");
-      // Broker disconnect means Agent 2 is unreachable
-      if (_agent2Online) {
-        _agent2Online = false;
-        if (_onConnChange) _onConnChange(false);
-      }
-    }
-    _reconnect();
-  }
 }
 
 bool AgentComm::publishDoor(DoorState state, const char* relatedUser) {
-  JsonDocument doc;
-  _appendCommonFields(doc);
-  doc[MSG_DOOR_STATE] = doorStateToString(state);
-  if (relatedUser && relatedUser[0]) doc[MSG_USER_NAME] = relatedUser;
-  String payload;
-  serializeJson(doc, payload);
-  return _publish(MQTT_TOPIC_DOOR, payload);
+    JsonDocument doc;
+    _appendCommonFields(doc);
+    doc[MSG_DOOR_STATE] = doorStateToString(state);
+    if (relatedUser && relatedUser[0]) doc[MSG_USER_NAME] = relatedUser;
+    String payload;
+    serializeJson(doc, payload);
+    return _publish(MQTT_TOPIC_DOOR, payload);
 }
 
 bool AgentComm::publishFace(const char* userName, float similarity) {
-  JsonDocument doc;
-  _appendCommonFields(doc);
-  doc[MSG_USER_NAME]  = userName ? userName : "";
-  doc[MSG_SIMILARITY] = similarity;
-  String payload;
-  serializeJson(doc, payload);
-  return _publish(MQTT_TOPIC_FACE, payload);
+    JsonDocument doc;
+    _appendCommonFields(doc);
+    doc[MSG_USER_NAME]  = userName ? userName : "";
+    doc[MSG_SIMILARITY] = similarity;
+    String payload;
+    serializeJson(doc, payload);
+    return _publish(MQTT_TOPIC_FACE, payload);
 }
 
 bool AgentComm::publishAlert(AlertLevel level, const char* alertType) {
-  JsonDocument doc;
-  _appendCommonFields(doc);
-  doc[MSG_ALERT_LEVEL] = alertLevelToString(level);
-  doc[MSG_ALERT_TYPE]  = alertType ? alertType : "";
-  String payload;
-  serializeJson(doc, payload);
-  return _publish(MQTT_TOPIC_ALERT, payload);
+    JsonDocument doc;
+    _appendCommonFields(doc);
+    doc[MSG_ALERT_LEVEL] = alertLevelToString(level);
+    doc[MSG_ALERT_TYPE]  = alertType ? alertType : "";
+    String payload;
+    serializeJson(doc, payload);
+    return _publish(MQTT_TOPIC_ALERT, payload);
 }
 
 bool AgentComm::publishStatus(AlertLevel level, unsigned long uptime) {
-  JsonDocument doc;
-  _appendCommonFields(doc);
-  doc[MSG_ALERT_LEVEL] = alertLevelToString(level);
-  doc[MSG_UPTIME]      = uptime;
-  String payload;
-  serializeJson(doc, payload);
-  return _publish(MQTT_TOPIC_STATUS, payload);
+    JsonDocument doc;
+    _appendCommonFields(doc);
+    doc[MSG_ALERT_LEVEL] = alertLevelToString(level);
+    doc[MSG_UPTIME]      = uptime;
+    String payload;
+    serializeJson(doc, payload);
+    return _publish(MQTT_TOPIC_STATUS, payload);
 }
 
 void AgentComm::setOnPresence(void (*cb)(bool, int))          { _onPresence      = cb; }
 void AgentComm::setOnAlarmDecision(void (*cb)(AlarmDecision)) { _onAlarmDecision = cb; }
 void AgentComm::setOnConnectionChange(void (*cb)(bool))       { _onConnChange    = cb; }
-bool AgentComm::isConnected()                                 { return _mqtt.connected(); }
+
+bool AgentComm::isConnected() {
+    portENTER_CRITICAL(&_brokerStateMux);
+    bool r = _brokerConnected;
+    portEXIT_CRITICAL(&_brokerStateMux);
+    return r;
+}

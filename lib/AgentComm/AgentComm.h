@@ -21,7 +21,8 @@ public:
                     const char* username = "", const char* password = "",
                     const char* clientId = "faceguard");
 
-  // Call every loop() iteration: runs PubSubClient::loop() and reconnect logic.
+  // Call every loop() iteration: drains the cross-task event queue and fires callbacks.
+  // PubSubClient::loop() and reconnect logic run in a background FreeRTOS task (Core 0).
   static void tick();
 
   // ── Publish ───────────────────────────────────────────────────────────────
@@ -47,6 +48,6 @@ public:
 
 private:
   static void _onMessage(const char* topic, byte* payload, unsigned int len);
-  static void _reconnect();
+  static void _mqttTaskFn(void* pvParameters);
   static bool _publish(const char* topic, const String& payload);
 };
