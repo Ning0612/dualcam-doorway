@@ -70,9 +70,9 @@ enum class AlertEvent  { UNKNOWN_VISITOR = 0, USER_RETURNED = 1, BOOT = 2 };
 
 | 結果 | 條件 |
 |------|------|
-| KNOWN_CONFIRMED | ≥ 3 hits 在 8 s 內；同臉不重複觸發直到 idle reset |
-| UNKNOWN_CONFIRMED | 持續 UNKNOWN ≥ 10 s 且 ≥ 10 hits；偶發 KNOWN 不重置 unknown timer |
-| Idle reset | 5 s 無臉 → 清除所有 counters/timers/confirmedName |
+| KNOWN_CONFIRMED | 最近 3 次 KNOWN hits 均在 8 s 內（sliding window ring buffer）；同臉不重複觸發直到 idle reset |
+| UNKNOWN_CONFIRMED | 最近 10 次 UNKNOWN/DETECTED hits 均在 10 s 內（sliding window, 2fps 下約 4.5 s 觸發）；確認前偶發 KNOWN 不清 UNKNOWN buffer；確認後 KNOWN 清 UNKNOWN buffer（防已知使用者誤報） |
+| Idle reset | 5 s 無臉 → 清除所有 ring buffers/confirmedName |
 
 ---
 
@@ -176,7 +176,7 @@ enum class AlertEvent  { UNKNOWN_VISITOR = 0, USER_RETURNED = 1, BOOT = 2 };
 | `FACE_TEXTURE_MIN_STDDEV` | 12.0 | mean L1 gradient 最低值 |
 | `FACE_VOTE_KNOWN_MIN` | 3 | KNOWN_CONFIRMED 最少 hits |
 | `FACE_VOTE_KNOWN_WINDOW_MS` | 8000 | KNOWN 累積窗口 |
-| `FACE_VOTE_WINDOW_MS` | 10000 | UNKNOWN_CONFIRMED 持續時間 |
+| `FACE_VOTE_WINDOW_MS` | 10000 | UNKNOWN sliding window 大小（最舊 hit 不得超過此值） |
 | `FACE_VOTE_UNKNOWN_MIN_HITS` | 10 | UNKNOWN_CONFIRMED 最少 hits |
 | `FACE_VOTE_IDLE_MS` | 5000 | 無臉 idle reset |
 | `HALL_DEFAULT_LOWER/UPPER` | 1000 / 3000 | open zone 預設邊界 |

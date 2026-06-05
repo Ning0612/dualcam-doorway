@@ -1,52 +1,71 @@
 #pragma once
 #include <Arduino.h>
-#include "states.h"    // VoteResult, FaceState
-#include "CameraAgent.h"  // FaceResult
+#include "states.h"
+#include "CameraAgent.h"
+#include "config.h"  // FACE_VOTE_KNOWN_MIN, FACE_VOTE_UNKNOWN_MIN_HITS
 
 // Snapshot of FaceVoter internal state for dashboard reporting.
 struct FaceVoterStatus {
   bool          active;
   bool          knownConfirmed;
-  int           knownCount;
+  int           knownCount;         // KNOWN ring buffer fill (0–FACE_VOTE_KNOWN_MIN)
   int           knownMin;
-  int           unknownHits;
-  unsigned long unknownElapsedMs;   // 0 when no UNKNOWN tracking active
+  int           unknownHits;        // UNKNOWN ring buffer fill (0–FACE_VOTE_UNKNOWN_MIN_HITS)
+  unsigned long unknownElapsedMs;   // age of oldest UNKNOWN hit in window; 0 when empty
   unsigned long unknownWindowMs;
   char          confirmedName[17];  // name at KNOWN_CONFIRMED; empty if not yet confirmed
 };
 
-// Temporal voting window for face recognition decisions.
+// Sliding-window temporal voting for face recognition decisions.
 //
-// KNOWN_CONFIRMED: requires FACE_VOTE_KNOWN_MIN hits accumulated within
-// FACE_VOTE_KNOWN_WINDOW_MS. Burst window resets if it expires without
-// enough hits. Repeated KNOWN_CONFIRMED for the same continuous presence
-// is suppressed until the face idles out and reset() is called.
+// KNOWN_CONFIRMED: fires when the oldest of the last FACE_VOTE_KNOWN_MIN KNOWN
+// hits is still within FACE_VOTE_KNOWN_WINDOW_MS. At 2 fps the ring buffer fills
+// in ~1 s; the window check is the binding constraint (~8 s max). Repeated
+// confirmation for the same continuous presence is suppressed until idle reset.
 //
-// UNKNOWN_CONFIRMED: requires BOTH FACE_VOTE_WINDOW_MS elapsed since first
-// UNKNOWN AND at least FACE_VOTE_UNKNOWN_MIN_HITS frame hits. Only
-// KNOWN_CONFIRMED clears the UNKNOWN timer — single KNOWN hits do not, to
-// avoid false-known events suppressing unknown-visitor alerts.
+// UNKNOWN_CONFIRMED: fires when the oldest of the last FACE_VOTE_UNKNOWN_MIN_HITS
+// UNKNOWN/DETECTED hits is still within FACE_VOTE_WINDOW_MS. At 2 fps this
+// confirms after roughly (FACE_VOTE_UNKNOWN_MIN_HITS - 1) x CAMERA_DETECT_INTERVAL_MS
+// (~4.5 s at default settings) — density-based, not duration-based. After
+// confirmation the window resets immediately so a persistent visitor re-triggers
+// every ~FACE_VOTE_UNKNOWN_MIN_HITS x CAMERA_DETECT_INTERVAL_MS worth of new hits.
 //
-// Persistent unknown visitor: UNKNOWN_CONFIRMED resets the window immediately,
-// so a visitor who stays will re-trigger every FACE_VOTE_WINDOW_MS.
+// Before KNOWN_CONFIRMED: single KNOWN hits do not clear the UNKNOWN ring buffer to
+// prevent false-known frames from suppressing unknown-visitor alerts.
+// After KNOWN_CONFIRMED: KNOWN hits clear the UNKNOWN ring buffer so that the
+// confirmed user's occasional recognition failures do not accumulate into a false alarm.
+// UNKNOWN hits are always tracked regardless of _knownConfirmed so a stranger appearing
+// after a known user still accumulates toward UNKNOWN_CONFIRMED.
 struct FaceVoter {
   VoteResult      update(FaceResult raw, unsigned long rawMs, unsigned long now);
   void            reset();
   bool            isActive() const { return _active; }
   FaceVoterStatus getStatus(unsigned long now) const;
-  // Call from main.cpp when VoteResult::KNOWN_CONFIRMED is returned, passing
-  // FaceRecognizer::getLastMatchName() so the name is preserved through later UNKNOWN frames.
+  // Call when VoteResult::KNOWN_CONFIRMED is returned, passing
+  // FaceRecognizer::getLastMatchName() so the name survives later UNKNOWN frames.
   void            setConfirmedName(const char* name);
 
 private:
-  unsigned long _firstKnownMs   = 0;  // start of current KNOWN burst window
-  unsigned long _unknownStartMs = 0;  // sustained-UNKNOWN timer; 0 until first UNKNOWN
+  static constexpr int KNOWN_BUF   = FACE_VOTE_KNOWN_MIN;        // 3
+  static constexpr int UNKNOWN_BUF = FACE_VOTE_UNKNOWN_MIN_HITS; // 10
+
+  unsigned long _knownTs[KNOWN_BUF]     = {};  // ring buffer of recent KNOWN hit timestamps
+  unsigned long _unknownTs[UNKNOWN_BUF] = {};  // ring buffer of recent UNKNOWN hit timestamps
+  int           _knownHead    = 0;  // next write index (circular); oldest when buffer full
+  int           _unknownHead  = 0;
+  int           _knownFill    = 0;  // valid entry count (0..KNOWN_BUF)
+  int           _unknownFill  = 0;
+
   unsigned long _lastFaceMs     = 0;
   unsigned long _lastSampleMs   = 0;  // last processed rawMs; prevents re-sampling same frame
   unsigned long _lastProgressMs = 0;
-  int           _knownCount     = 0;  // KNOWN hits accumulated in current burst
-  int           _unknownHits    = 0;  // UNKNOWN frame count since _unknownStartMs
   bool          _active         = false;
-  bool          _knownConfirmed = false;  // suppresses repeat KNOWN_CONFIRMED until face idles
-  char          _confirmedName[17] = {};  // name captured at KNOWN_CONFIRMED
+  bool          _knownConfirmed = false;  // suppresses repeat KNOWN_CONFIRMED until idle reset
+  char          _confirmedName[17] = {};
+
+  // Index of the oldest entry in a circular buffer.
+  // When not yet full, entries start at index 0; when full, head IS the oldest slot.
+  static int _oldestIdx(int head, int fill, int buf) {
+    return (fill < buf) ? 0 : head;
+  }
 };

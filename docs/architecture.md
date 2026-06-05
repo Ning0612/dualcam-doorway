@@ -84,7 +84,7 @@ loop() 每次迭代：
    │                       └── SecurityStateMachine 觸發 onKnownConfirmed callback
    └── UNKNOWN_CONFIRMED → sm.onVoteResult(UNKNOWN_CONFIRMED)
                             └── SecurityStateMachine 觸發 onAlert callback
-                            注意：持續存在的未知訪客每 FACE_VOTE_WINDOW_MS（10s）重新觸發一次
+                            注意：持續存在的未知訪客約每 4.5s 重新觸發一次（ring buffer 重新累滿）
 
 9. 若 lastRawResult == FACE_KNOWN（raw，且 lastRawResultMs < 2×CAMERA_DETECT_INTERVAL_MS）：
    sm.onFaceKnownRaw(name)    更新 _lastSeenKnownName（門歸因 fallback 用）
@@ -302,14 +302,15 @@ FaceVoter 防止單一 frame 誤觸發，所有人臉辨識結果必須先通過
 ### KNOWN_CONFIRMED 規則
 
 ```
-需要：FACE_VOTE_KNOWN_MIN (3) 次 KNOWN hit
-在：  FACE_VOTE_KNOWN_WINDOW_MS (8000ms) 窗口內
+需要：ring buffer 最後 FACE_VOTE_KNOWN_MIN (3) 次 KNOWN hit
+且：  最舊的 hit 在 FACE_VOTE_KNOWN_WINDOW_MS (8000ms) 內（sliding window）
 
 timeline:
-  0ms    - 第1次 KNOWN → _knownCount=1, _firstKnownMs=0ms
-  2000ms - 第2次 KNOWN → _knownCount=2
-  5000ms - 第3次 KNOWN → _knownCount=3 → KNOWN_CONFIRMED ✓
-  
+  0ms    - 第1次 KNOWN → ring buffer fill=1
+  2000ms - 第2次 KNOWN → ring buffer fill=2
+  5000ms - 第3次 KNOWN → ring buffer fill=3
+           oldest=0ms, age=5000ms ≤ 8000ms → KNOWN_CONFIRMED ✓
+
   確認後，同一連續存在不重複觸發（_knownConfirmed=true）
   直到 5s 無臉（Idle Reset）才重置
 ```
@@ -317,18 +318,19 @@ timeline:
 ### UNKNOWN_CONFIRMED 規則
 
 ```
-需要：FACE_VOTE_UNKNOWN_MIN_HITS (10) 次 UNKNOWN frame
-且：  已持續 FACE_VOTE_WINDOW_MS (10000ms)
+需要：ring buffer 最後 FACE_VOTE_UNKNOWN_MIN_HITS (10) 次 UNKNOWN/DETECTED hit
+且：  最舊的 hit 在 FACE_VOTE_WINDOW_MS (10000ms) 內（sliding window，density-based）
 
-timeline:
-  0ms    - 第1次 UNKNOWN → _unknownStartMs=0ms
-  ...持續偵測到 UNKNOWN...
-  10s+   - 且 hits >= 10 → UNKNOWN_CONFIRMED ✓
-  
-  確認後立即重置計時器，持續存在的訪客每 10s 可重新觸發
-  
-  重要：偶發的 KNOWN raw result 不會重置 unknown timer
-  （只有 KNOWN_CONFIRMED 才清除 unknown 狀態）
+timeline（2 fps 下）：
+  0ms    - 第1次 UNKNOWN → ring buffer fill=1
+  ...每 500ms 一次 UNKNOWN...
+  4500ms - 第10次 UNKNOWN → ring buffer fill=10
+           oldest=0ms, age=4500ms ≤ 10000ms → UNKNOWN_CONFIRMED ✓（約 4.5s）
+
+  確認後立即重置 ring buffer，持續存在的訪客約每 4.5s 可重新觸發
+
+  重要：偶發的 KNOWN raw result 不會重置 UNKNOWN ring buffer
+  （只有 KNOWN_CONFIRMED 才清除 UNKNOWN 狀態）
 ```
 
 ### Idle Reset

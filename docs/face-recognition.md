@@ -245,12 +245,12 @@ bestSim ≥ FACE_SIMILARITY_THRESHOLD（0.90）且 margin 足夠 → FACE_KNOWN
 
 所有辨識結果必須通過 FaceVoter 才能觸發事件：
 
-- **KNOWN_CONFIRMED**：`FACE_VOTE_KNOWN_WINDOW_MS`（8 s）內累積 `FACE_VOTE_KNOWN_MIN`（3）次 KNOWN
+- **KNOWN_CONFIRMED**：最近 `FACE_VOTE_KNOWN_MIN`（3）次 KNOWN hit 均在 `FACE_VOTE_KNOWN_WINDOW_MS`（8 s）內（sliding window ring buffer）
   - Confirmed 後記錄 `confirmedName`；同一張臉連續在畫面中不重複觸發
-- **UNKNOWN_CONFIRMED**：持續偵測 UNKNOWN 超過 `FACE_VOTE_WINDOW_MS`（10 s）且至少 `FACE_VOTE_UNKNOWN_MIN_HITS`（10）次
-  - 偶發 KNOWN raw result 不重置 unknown timer
-  - Unknown 持續存在時，每隔 `FACE_VOTE_WINDOW_MS` 可重新觸發
-- **Idle Reset**：`FACE_VOTE_IDLE_MS`（5 s）無臉 → 重置所有計數器與 confirmedName
+- **UNKNOWN_CONFIRMED**：最近 `FACE_VOTE_UNKNOWN_MIN_HITS`（10）次 UNKNOWN/DETECTED hit 均在 `FACE_VOTE_WINDOW_MS`（10 s）內（sliding window，2 fps 下約 4.5 s 觸發）
+  - 偶發 KNOWN raw result 不重置 UNKNOWN ring buffer
+  - 持續存在的訪客約每 4.5 s 重新觸發一次（ring buffer 重新累滿）
+- **Idle Reset**：`FACE_VOTE_IDLE_MS`（5 s）無臉 → 清空所有 ring buffer 與 confirmedName
 
 ---
 
@@ -370,7 +370,7 @@ clearAll() 效果：
 
 ### `FACE_VOTE_WINDOW_MS`（預設 10000ms）
 
-UNKNOWN_CONFIRMED 所需最短持續時間。縮短可加速告警，增加誤觸風險。
+UNKNOWN sliding window 大小。最近 `FACE_VOTE_UNKNOWN_MIN_HITS` 次 UNKNOWN hit 的最舊 hit 必須在此時間內才觸發告警。縮短可加速告警，增加誤觸風險（實際觸發時間 ≈ `FACE_VOTE_UNKNOWN_MIN_HITS × CAMERA_DETECT_INTERVAL_MS`，與此值關係弱）。
 
 ### `FACE_VOTE_KNOWN_MIN`（預設 3）
 
