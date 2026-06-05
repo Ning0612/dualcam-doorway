@@ -520,7 +520,7 @@ void DashboardServer::begin(WebServer& server,
     doc["agent2_online"]   = _sm->isAgent2Online();
     doc["alarm_active"]    = _sm->isAlarmActive();
     doc["last_known_user"] = _sm->getLastKnownUser();
-    doc["presence_state"]  = "";   // updated by AgentComm callback; reflected via sm
+    doc["presence_state"]  = "";   // SSM only exposes isAgent2Online(); presence string not stored
     doc["uptime"]          = millis();
     doc["hall_raw"]   = DoorSensor::getRaw();
     doc["hall_lower"] = SettingsStore::getHallLowerBound();

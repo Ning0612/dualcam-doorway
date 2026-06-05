@@ -183,26 +183,26 @@ Agent 2 發布的室內佔用狀態。
 
 ```json
 {
-  "presence_state": "OCCUPIED",
-  "presence_score": 3,
+  "state": "OCCUPIED",
+  "score": 3,
   "timestamp": "2025-12-20T18:30:05+08:00"
 }
 ```
 
 | 欄位 | 型別 | 說明 |
 |------|------|------|
-| `presence_state` | String | `"OCCUPIED"` 或 `"UNOCCUPIED"` |
-| `presence_score` | Integer | 佔用置信分數（供參考） |
+| `state` | String | `"OCCUPIED"` 或 `"UNOCCUPIED"` |
+| `score` | Integer | 佔用置信分數（供參考） |
 | `timestamp` | String | ISO 8601 |
 
 **AlertLevel 影響**：
 
-| presence_state | AlertLevel |
-|---------------|------------|
+| state | AlertLevel |
+|-------|------------|
 | `"OCCUPIED"` | `ALERT_YELLOW`（如 Agent 2 在線） |
 | `"UNOCCUPIED"` | `ALERT_RED` |
 
-> **Edge case**：若 `presence_state` 為非預期值（非 `"OCCUPIED"` 也非 `"UNOCCUPIED"`），FaceGuard 視為 `UNOCCUPIED`（`occupied=false`），但仍更新 Agent 2 在線計時（即 Agent 2 被標為在線，但警戒狀態為 `ALERT_RED`）。建議 Agent 2 確保只發送標準值。
+> **Edge case**：若 `state` 為非預期值（非 `"OCCUPIED"` 也非 `"UNOCCUPIED"`），FaceGuard 視為 `UNOCCUPIED`（`occupied=false`），但仍更新 Agent 2 在線計時（即 Agent 2 被標為在線，但警戒狀態為 `ALERT_RED`）。建議 Agent 2 確保只發送標準值。
 
 ### `home/home_state/alarm_decision`
 
@@ -299,7 +299,7 @@ NTP 未同步時（`time()` 回傳值 < 1700000000），固定輸出：
 
 > **status payload 特例**：`uptime` 欄位仍為 `millis()` 整數（啟動後毫秒數），與 `timestamp` 並存。
 
-Agent 2 傳來的 presence / alarm_decision 訊息格式由 Agent 2 自行決定；FaceGuard 只解析 `presence_state`、`presence_score`、`alarm_decision` 欄位，其餘欄位不影響解析。alarm_command 訊息則額外驗證 `agent` 與 `timestamp` 欄位。
+Agent 2 傳來的 presence / alarm_decision 訊息格式由 Agent 2 自行決定；FaceGuard 只解析 `state`、`score`、`alarm_decision` 欄位，其餘欄位不影響解析。alarm_command 訊息則額外驗證 `agent` 與 `timestamp` 欄位。
 
 ### 主題常數（`messages.h`）
 
@@ -367,8 +367,8 @@ mqtt_comm task (Core 0):
 頻率: 建議每 30–60 秒一次（FaceGuard 逾時 180s / 3 分鐘後判定離線）
 格式:
 {
-  "presence_state": "OCCUPIED" | "UNOCCUPIED",
-  "presence_score": <integer>,
+  "state": "OCCUPIED" | "UNOCCUPIED",
+  "score": <integer>,
   "timestamp": "<ISO 8601>"
 }
 ```
@@ -414,7 +414,7 @@ home/security/camera  — 接收 Camera 即時畫面（raw JPEG binary，5fps）
 ```bash
 # 模擬 Agent 2 發布 presence
 mosquitto_pub -h <broker-ip> -t home/home_state/presence \
-  -m '{"presence_state":"OCCUPIED","presence_score":3,"timestamp":"2025-12-20T18:30:05+08:00"}'
+  -m '{"state":"OCCUPIED","score":3,"timestamp":"2025-12-20T18:30:05+08:00"}'
 
 # 監聽 FaceGuard 發布的所有事件
 mosquitto_sub -h <broker-ip> -t "home/security/#" -v

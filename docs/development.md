@@ -196,10 +196,14 @@ build_flags = -I include -D FACEGUARD
 
 ### FreeRTOS Task
 
-主程式用到兩個 FreeRTOS Task：
-- `boot_notify`：非同步發送 Discord 啟動通知（避免阻塞 setup）
-- `cam_init`：非同步初始化 Camera（避免阻塞 loop）
-- MJPEG stream server 在 `CameraAgent::startStreamServer()` 中由獨立 task 管理
+主程式用到四個 FreeRTOS Task：
+
+| Task 名稱 | Stack | 優先權 | Core | 用途 |
+|-----------|-------|--------|------|------|
+| `boot_notify` | 8192 B | 1 | 任意 | 開機 Discord 通知（5s 延遲後發送，執行後自刪） |
+| `cam_init` | 8192 B | 1 | 任意 | Camera 非同步初始化（執行後自刪） |
+| `mqtt_comm` | 8192 B | 1 | 0 | MQTT loop、重連、DNS 解析、Agent 2 超時監控 |
+| `cam_stream` | 8192 B | 1 | 0 | MJPEG frame 推送（port 81，由 `CameraAgent::startStreamServer()` 啟動） |
 
 ---
 

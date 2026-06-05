@@ -53,6 +53,7 @@
 | `/api/log/stats` | session + 需改密碼 | — | 月份統計 JSON（?month=YYYYMM） |
 | `/api/log/months` | session + 需改密碼 | — | 有資料月份列表 JSON |
 | `/api/buzzer/test` | session | POST 需驗證 | 測試蜂鳴器（form body `freq` 可選） |
+| `/snapshot` | **不需要** | — | 擷取單張 JPEG 畫面（供 Agent 2 等 LAN 裝置使用；無認證保護，程式碼未強制限制來源 IP，建議確保裝置不暴露至公網） |
 
 > **WiFi 設定**：Dashboard 不提供 WiFi 修改頁面。WiFi 憑證只能透過 Config Portal（AP 模式）設定。若需變更 WiFi，透過 Serial 輸入 `W` 清除憑證並重啟，裝置會進入 AP 模式。
 
@@ -63,7 +64,7 @@
 ### 登入流程
 
 1. 訪問需要認證的頁面 → 自動重導向 `/login`
-2. 輸入帳號（固定 `admin`）與密碼
+2. 輸入密碼（預設 `admin`；登入表單僅有密碼欄位，無帳號欄位）
 3. 密碼錯誤 5 次 → 鎖定 60 秒
 4. 登入成功 → 建立 session token，設定 Cookie
 
@@ -93,7 +94,7 @@ Set-Cookie: sid=<16-byte-random-hex>; HttpOnly; Path=/; SameSite=Lax
 | Door State | OPEN / CLOSED |
 | Face State | NO_FACE / KNOWN / UNKNOWN |
 | Alert Level | GREEN / YELLOW / RED（含顏色指示） |
-| Agent 2 狀態 | online / offline，presence state |
+| Agent 2 狀態 | online / offline（online 時顯示 "Online · ?"，因 `presence_state` 目前實作中不回傳實際佔用狀態） |
 | 已知使用者 | 最後一次 KNOWN_CONFIRMED 的使用者名稱 |
 | 最近事件 | 最近 5 筆 Face/Door/Alert 事件摘要 |
 | FaceVoter 狀態 | known hits、unknown hits、elapsed time |
@@ -173,7 +174,8 @@ Dashboard 整合 Camera 預覽（port 81 MJPEG stream）與人臉管理，每 3 
 ```
 
 `face_result` 可能值：`"KNOWN"`、`"UNKNOWN"`、`"DETECTED"`、`"NONE"`（FACE_RECENT_MS 內無偵測時）  
-`face_voter_state` 可能值：`"idle"`、`"active"`、`"known_pending"`、`"unknown_pending"`、`"known_confirmed"`
+`face_voter_state` 可能值：`"idle"`、`"active"`、`"known_pending"`、`"unknown_pending"`、`"known_confirmed"`  
+`presence_state` 目前實作中永遠回傳空字串（`""`）；Agent 2 在線狀態可由 `agent2_online` 布林值判斷。
 
 ### POST `/api/face/enroll`
 

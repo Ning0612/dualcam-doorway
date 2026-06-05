@@ -70,7 +70,7 @@ loop() 每次迭代：
 2. CameraAgent::handleStreamClients()  (no-op，已由 task 管理)
 3. DoorSensor::tick()           ADC 採樣、去彈跳 → onDoorChange()
 4. LedController::tick()        閃爍效果更新
-5. BuzzerController::tick()     蜂鳴器計時，到期呼叫 _cancelAlarm()
+5. BuzzerController::tick()     測試嗶聲自動結束計時（警報自動取消由 sm.tick() 負責）
 6. AgentComm::tick()            排空跨 task 事件佇列，觸發 presence / alarmDecision /
                                 alarmCommand / connChange callbacks
                                 （MQTT loop 與重連在 Core 0 背景 task 執行）
@@ -377,7 +377,7 @@ FaceRecognizer::setOnClearCallback([]{ faceVoter.reset(); });
 | `boot_notify` | 8192 B | 1 | 任意 | 開機 Discord 通知（5s 延遲後發送，執行後自刪） |
 | `cam_init` | 8192 B | 1 | 任意 | Camera 非同步初始化（執行後自刪） |
 | `mqtt_comm` | 8192 B | 1 | 0 | MQTT loop、重連、DNS 解析、Agent 2 超時監控 |
-| MJPEG stream task | 4096 B | 5 | 任意 | MJPEG frame 推送（port 81） |
+| `cam_stream` | 8192 B | 1 | 0 | MJPEG frame 推送（port 81，`CameraAgent::startStreamServer()` 啟動） |
 
 > `loop()` 在 Arduino 框架的 `app_main` task 中執行（Core 1），stack ≈ 8KB。`mqtt_comm` 固定在 Core 0 以避免與主迴圈競爭。
 

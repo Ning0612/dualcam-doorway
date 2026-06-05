@@ -166,7 +166,7 @@ Serial 確認（重啟後）：
 | 測試項目 | 方法 | 預期結果 |
 |---------|------|---------|
 | 門感應 | 開關門 | Serial 印出 door OPEN/CLOSED，LED 無變化 |
-| 人臉辨識 | 站在 Camera 前 8 秒 | Serial 印出 KNOWN_CONFIRMED，LED 轉綠 |
+| 人臉辨識 | 站在 Camera 前（最快約 1.5s，最長 8s 窗口內 3 次 hit） | Serial 印出 KNOWN_CONFIRMED，LED 轉綠 |
 | 未知訪客 | Serial 輸入 `u` | 蜂鳴器響，LED 閃爍，Discord 收到訊息 |
 | Dashboard | 瀏覽 WebUI | 即時狀態更新（3s 輪詢） |
 | MJPEG 串流 | 瀏覽 `:81/stream` | 即時 Camera 畫面 |

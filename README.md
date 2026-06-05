@@ -48,7 +48,7 @@ ESP32 NMK99 + OV2640 Camera 實現的可獨立運作門口監控系統。整合�
 3. 選擇 WiFi SSID，輸入密碼，按「儲存」
 4. 裝置重啟後連上 WiFi，Serial 印出 IP
 5. 瀏覽 `http://<裝置IP>/` 或 `http://faceguard.local/`
-6. 預設帳號 `admin`，首次登入需設定密碼
+6. 預設密碼 `admin`（登入表單僅有密碼欄位），首次登入需設定新密碼
 7. 前往 `/settings` 設定 Discord Webhook、MQTT Broker（含可選 Username/Password）等參數；**MQTT 設定需重啟才套用**
 
 ## 文件索引
@@ -81,7 +81,7 @@ faceguard/
 │   ├── AgentComm/            # MQTT publish/subscribe
 │   ├── DiscordNotifier/      # Discord Webhook HTTPS 通知
 │   ├── ConfigPortal/         # WiFi AP 設定入口
-│   ├── ConfigManager/        # MQTT 設定 NVS 管理
+│   ├── ConfigManager/        # MQTT 與蜂鳴器設定 NVS 管理
 │   ├── SettingsStore/        # 密碼、Discord URL、霍爾閾值 NVS 管理
 │   ├── SessionAuth/          # Session token、CSRF、暴力破解防護
 │   ├── DashboardServer/      # HTTP 路由、PROGMEM HTML、AJAX API
