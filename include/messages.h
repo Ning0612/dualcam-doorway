@@ -22,8 +22,8 @@
 #define MSG_USER_NAME       "user_name"
 #define MSG_SIMILARITY      "similarity"
 #define MSG_ALARM_DECISION  "alarm_decision"
-#define MSG_PRESENCE_STATE  "presence_state"
-#define MSG_PRESENCE_SCORE  "presence_score"
+#define MSG_PRESENCE_STATE  "state"
+#define MSG_PRESENCE_SCORE  "score"
 #define MSG_ALERT_TYPE      "alert_type"
 #define MSG_UPTIME          "uptime"
 
