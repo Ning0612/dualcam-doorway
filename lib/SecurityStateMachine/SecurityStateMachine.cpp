@@ -25,6 +25,14 @@ void SecurityStateMachine::_silenceBuzzer() {
   if (_onBuzzerSilence) _onBuzzerSilence();
 }
 
+void SecurityStateMachine::_beginAlarmSuppress() {
+  _alarmSuppressActive  = true;
+  _alarmSuppressStartMs = millis();
+  _lastSuppressLogMs    = 0;  // ensure first suppressed hit is always logged
+  Serial.printf("[FaceGuard] cancel cooldown: new alarms suppressed for %lus\n",
+                CANCEL_SUPPRESS_MS / 1000UL);
+}
+
 void SecurityStateMachine::_triggerAlarm() {
   if (_alarmActive) return;
   _alarmActive        = true;
@@ -74,6 +82,16 @@ void SecurityStateMachine::onVoteResult(VoteResult result, const char* name, flo
   } else if (result == VoteResult::UNKNOWN_CONFIRMED) {
     _faceState = FaceState::FACE_UNKNOWN;
     _recalcAlertLevel();
+
+    if (_isAlarmSuppressed()) {
+      unsigned long now = millis();
+      if (now - _lastSuppressLogMs >= 30000UL) {
+        _lastSuppressLogMs = now;
+        Serial.printf("[FaceGuard] UNKNOWN_CONFIRMED suppressed (%lus cooldown remaining)\n",
+                      (CANCEL_SUPPRESS_MS - (now - _alarmSuppressStartMs)) / 1000UL);
+      }
+      return;
+    }
 
     if (_alertLevel == AlertLevel::ALERT_RED) {
       // Independent operation: trigger immediately
@@ -128,6 +146,11 @@ void SecurityStateMachine::onAlarmDecision(AlarmDecision d) {
       _triggerAlarm();
     }
   } else if (d == AlarmDecision::CANCEL_ALARM) {
+    // Start suppression only when there was something to cancel; prevents retained/stale
+    // MQTT CANCEL_ALARM messages on reboot from triggering a spurious 5-min cooldown.
+    if (_waitingForDecision || _alarmActive) {
+      _beginAlarmSuppress();
+    }
     _waitingForDecision = false;
     _cancelAlarm();  // no-op if alarm not active (guards internally)
   }
@@ -143,7 +166,8 @@ void SecurityStateMachine::onAlarmCommand(AlarmDecision d) {
       Serial.println("[FaceGuard] alarm_command CANCEL: Agent2 judged safe — clearing pending decision");
     }
     _waitingForDecision = false;
-    _cancelAlarm();  // no-op if alarm not yet active
+    _beginAlarmSuppress();  // proactive command: always start suppression
+    _cancelAlarm();         // no-op if alarm not yet active
   }
 }
 
@@ -170,6 +194,12 @@ void SecurityStateMachine::onFaceKnownRaw(const char* name) {
 
 void SecurityStateMachine::tick() {
   unsigned long now = millis();
+
+  // Expire alarm suppression cooldown and log the transition
+  if (_alarmSuppressActive && (now - _alarmSuppressStartMs) >= CANCEL_SUPPRESS_MS) {
+    _alarmSuppressActive = false;
+    Serial.println("[FaceGuard] cancel cooldown expired — alarms re-enabled");
+  }
 
   // Expire known-user green window
   if (_knownConfirmed && (now - _knownConfirmedMs) >= KNOWN_GREEN_DURATION_MS) {

@@ -104,11 +104,21 @@ enum class AlertEvent  { UNKNOWN_VISITOR = 0, USER_RETURNED = 1, BOOT = 2 };
 
 蜂鳴器持續時間到期 / 門關閉 / KNOWN_CONFIRMED 收到
 
+### 警報壓制（Cancel Cooldown）
+
+- 收到 Agent 2 外部取消命令後，啟動 5 分鐘壓制（`CANCEL_SUPPRESS_MS = 300000 ms`）
+- 壓制期間 `UNKNOWN_CONFIRMED` 不觸發警報、不通知 Agent 2（YELLOW 路徑同樣被阻斷）
+- Agent 2 主動 `TRIGGER_ALARM`（`alarm_command`）仍可強制觸發，不受壓制影響
+- 啟動壓制的條件：
+  - `onAlarmDecision(CANCEL_ALARM)` 且 `_waitingForDecision || _alarmActive`（防 retained MQTT 誤壓制）
+  - `onAlarmCommand(CANCEL_ALARM)`（proactive command，無條件啟動）
+- **不**啟動壓制的條件：蜂鳴器時間到期 / 門關閉 / KNOWN_CONFIRMED
+
 ### 邊界行為
 
 - `onFaceKnownRaw(name)`：每 loop() raw KNOWN 時呼叫，維護 `_lastSeenKnownName`；供門開時使用者歸因
 - `onAgent2Online(false)`：若在 `_waitingForDecision` 中，立即 TRIGGER_ALARM
-- `onAlarmDecision(TRIGGER_ALARM)`：只在 `_waitingForDecision` 下生效，防 retained MQTT 誤觸；`CANCEL_ALARM` 無論 `_waitingForDecision` 狀態均清除等待並呼叫 `_cancelAlarm()`（alarm 未啟動時為 no-op）
+- `onAlarmDecision(TRIGGER_ALARM)`：只在 `_waitingForDecision` 下生效，防 retained MQTT 誤觸；`CANCEL_ALARM` 只在有 pending/active alarm 時啟動壓制，再清除等待並呼叫 `_cancelAlarm()`（alarm 未啟動時為 no-op）
 - `_returnFired` 旗標防同一綠燈窗口內重複觸發「已知使用者回家」
 
 ---
@@ -185,6 +195,7 @@ enum class AlertEvent  { UNKNOWN_VISITOR = 0, USER_RETURNED = 1, BOOT = 2 };
 | `AGENT2_OFFLINE_TIMEOUT_MS` | 180000 | 無 presence 3 分鐘 → 離線（Agent 2 心跳約 60s） |
 | `ALARM_DECISION_TIMEOUT_MS` | 90000 | Yellow alert 等待 Agent 2（SecurityStateMachine.h） |
 | `KNOWN_GREEN_DURATION_MS` | 60000 | KNOWN_CONFIRMED 保持 GREEN（SecurityStateMachine.h） |
+| `CANCEL_SUPPRESS_MS` | 300000 | 收到外部 CANCEL_ALARM 後壓制新警報 5 分鐘（SecurityStateMachine.h） |
 | `DISCORD_RATE_LIMIT_MS` | 30000 | 同 AlertEvent 最少間隔 |
 | `DISCORD_FAIL_COOLDOWN_MS` | 300000 | 連線失敗後封鎖 |
 

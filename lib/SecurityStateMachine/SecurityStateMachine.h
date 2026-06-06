@@ -24,6 +24,10 @@
 
 static constexpr unsigned long ALARM_DECISION_TIMEOUT_MS = 90000UL;
 static constexpr unsigned long KNOWN_GREEN_DURATION_MS   = 60000UL;
+// After external CANCEL_ALARM (from Agent 2): suppress new alarm triggers for 5 min.
+// Prevents the system from re-alarming over the same event Agent 2 already reviewed.
+// Auto-cancel paths (buzzer timeout, door close, KNOWN_CONFIRMED) do NOT start suppression.
+static constexpr unsigned long CANCEL_SUPPRESS_MS        = 300000UL;
 
 class SecurityStateMachine {
 public:
@@ -56,6 +60,7 @@ public:
   bool        isAgent2Online()   const { return _agent2Online; }
   bool        isAlarmActive()    const { return _alarmActive; }
   bool        isBuzzerActive()   const { return _buzzerActive; }
+  bool        isAlarmSuppressed() const { return _isAlarmSuppressed(); }
   const char* getLastKnownUser() const { return _lastKnownUser; }
 
   // ── Callbacks (set before first call to any on*) ──────────────────────────
@@ -118,6 +123,12 @@ private:
   // until the next KNOWN_CONFIRMED or the green window expires.
   bool          _returnFired           = false;
 
+  // Post-cancel alarm suppression (started by external CANCEL_ALARM from Agent 2).
+  // Uses start+duration pattern (unsigned subtraction) to handle millis() rollover.
+  bool          _alarmSuppressActive  = false;
+  unsigned long _alarmSuppressStartMs = 0;
+  unsigned long _lastSuppressLogMs    = 0;  // throttles serial log during suppression
+
   AlertCallback   _onAlert          = nullptr;
   DoorCallback    _onDoorEvent      = nullptr;
   KnownCallback   _onKnownConfirmed = nullptr;
@@ -127,5 +138,10 @@ private:
   void _recalcAlertLevel();
   void _triggerAlarm();
   void _cancelAlarm();
-  void _silenceBuzzer();  // stop buzzer only; alarm state unchanged
+  void _silenceBuzzer();       // stop buzzer only; alarm state unchanged
+  void _beginAlarmSuppress();  // start 5-min post-cancel suppression
+  bool _isAlarmSuppressed() const {
+    return _alarmSuppressActive &&
+           (millis() - _alarmSuppressStartMs) < CANCEL_SUPPRESS_MS;
+  }
 };
