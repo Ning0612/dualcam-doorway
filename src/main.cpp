@@ -35,7 +35,9 @@ LogManager          logManager;
 static unsigned long wifiLostMs       = 0;
 static unsigned long lastStatusPubMs  = 0;
 static unsigned long lastCamPubMs     = 0;
+static unsigned long lastDoorPubMs    = 0;
 static constexpr unsigned long STATUS_PUB_INTERVAL_MS = 30000UL;
+static constexpr unsigned long DOOR_PUB_INTERVAL_MS   = 30000UL;
 
 // ── NTP ───────────────────────────────────────────────────────────────────────
 
@@ -486,6 +488,12 @@ void loop() {
   if (millis() - lastStatusPubMs >= STATUS_PUB_INTERVAL_MS) {
     AgentComm::publishStatus(sm.getAlertLevel(), millis());
     lastStatusPubMs = millis();
+  }
+
+  // Periodic door state heartbeat (allows Agent 2 to recover state after reconnect)
+  if (millis() - lastDoorPubMs >= DOOR_PUB_INTERVAL_MS) {
+    AgentComm::publishDoor(sm.getDoorState(), nullptr);
+    lastDoorPubMs = millis();
   }
 
   // 5 fps MQTT camera snapshot — best-effort, drops frame if MQTT busy or camera unavailable
