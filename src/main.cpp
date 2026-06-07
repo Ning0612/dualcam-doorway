@@ -300,6 +300,8 @@ static void handleSerialInput() {
       break;
     case 'u':
       Serial.println("[FaceGuard] unknown visitor CONFIRMED (manual)");
+      faceVoter.setConfirmedName("");
+      AgentComm::publishFace("", 0.0f);
       sm.onVoteResult(VoteResult::UNKNOWN_CONFIRMED);
       break;
     case 'e':
@@ -467,6 +469,8 @@ void loop() {
   } else if (vote == VoteResult::UNKNOWN_CONFIRMED) {
     Serial.println("[FaceGuard] unknown visitor confirmed by vote window");
     logManager.logFace(FaceState::FACE_UNKNOWN, VoteResult::UNKNOWN_CONFIRMED, "", 0.0f);
+    faceVoter.setConfirmedName("");
+    AgentComm::publishFace("", 0.0f);
     sm.onVoteResult(VoteResult::UNKNOWN_CONFIRMED);
   }
 

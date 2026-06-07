@@ -519,7 +519,6 @@ void DashboardServer::begin(WebServer& server,
     doc["door_state"]      = doorStateToString(_sm->getDoorState());
     doc["agent2_online"]   = _sm->isAgent2Online();
     doc["alarm_active"]    = _sm->isAlarmActive();
-    doc["last_known_user"] = _sm->getLastKnownUser();
     doc["presence_state"]  = "";   // SSM only exposes isAgent2Online(); presence string not stored
     doc["uptime"]          = millis();
     doc["hall_raw"]   = DoorSensor::getRaw();
@@ -549,6 +548,7 @@ void DashboardServer::begin(WebServer& server,
     // FaceVoter state
     if (_faceVoter) {
       FaceVoterStatus fvs = _faceVoter->getStatus(millis());
+      doc["last_known_user"] = fvs.confirmedName;
       const char* voterState;
       if      (fvs.knownConfirmed)   voterState = "known_confirmed";
       else if (!fvs.active)          voterState = "idle";
@@ -562,6 +562,8 @@ void DashboardServer::begin(WebServer& server,
       doc["face_voter_unknown_hits"]      = fvs.unknownHits;
       doc["face_voter_unknown_elapsed_s"] = (int)(fvs.unknownElapsedMs / 1000UL);
       doc["face_voter_unknown_window_s"]  = (int)(fvs.unknownWindowMs  / 1000UL);
+    } else {
+      doc["last_known_user"] = "";
     }
 
     String json;
