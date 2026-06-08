@@ -242,7 +242,7 @@ Publish:   home/security/door | face | alert | status | camera（5fps JPEG）
 Subscribe: home/home_state/presence | alarm_decision | alarm_command | home/display/status
 ```
 
-JSON 事件 payload（door/face/alert/status）包含 `agent: "FaceGuard"` 與 ISO 8601 UTC `timestamp`（`...Z`）；NTP 未同步時 timestamp 為 `"1970-01-01T00:00:00.000000Z"`。`home/security/camera` 為原始 JPEG binary，無 JSON 欄位。
+JSON 事件 payload（door/face/alert/status）包含 `agent: "FaceGuard"` 與 ISO 8601 本地時間 `timestamp`（帶時區 offset，如 `...+08:00`；依 WebUI 設定時區）；NTP 未同步時 timestamp 為 `"1970-01-01T00:00:00.000000Z"`。`home/security/camera` 為原始 JPEG binary，無 JSON 欄位。
 
 Agent 2 離線（180 s / 3 分鐘無 presence）→ ALERT_RED。完整 payload 格式見 `docs/mqtt.md`。
 

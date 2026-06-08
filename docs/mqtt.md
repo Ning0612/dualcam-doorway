@@ -73,7 +73,7 @@ Username 為空字串時，連線不帶認證資訊（Anonymous）。Username �
 ```json
 {
   "agent": "FaceGuard",
-  "timestamp": "2025-12-20T18:30:05.000000Z",
+  "timestamp": "2025-12-20T18:30:05.000000+08:00",
   "door_state": "DOOR_OPEN",
   "user_name": "Alice"
 }
@@ -82,7 +82,7 @@ Username 為空字串時，連線不帶認證資訊（Anonymous）。Username �
 | 欄位 | 型別 | 說明 |
 |------|------|------|
 | `agent` | String | 固定為 `"FaceGuard"` |
-| `timestamp` | String | ISO 8601 UTC 時間（NTP 未同步時為 `"1970-01-01T00:00:00.000000Z"`） |
+| `timestamp` | String | ISO 8601 本地時間（帶時區 offset，如 `+08:00`；NTP 未同步時為 `"1970-01-01T00:00:00.000000Z"`） |
 | `door_state` | String | `"DOOR_OPEN"` 或 `"DOOR_CLOSED"` |
 | `user_name` | String | 若門開啟前有已知使用者確認（KNOWN_CONFIRMED 窗口內，或最近 raw KNOWN 在 ~1.5s 內），填入使用者名稱；否則省略此欄位 |
 
@@ -94,7 +94,7 @@ FaceVoter 投票狀態變化時及每 30 秒心跳時發布。
 ```json
 {
   "agent": "FaceGuard",
-  "timestamp": "2025-12-20T18:30:05.000000Z",
+  "timestamp": "2025-12-20T18:30:05.000000+08:00",
   "vote_result": "KNOWN_CONFIRMED",
   "user_name": "Alice",
   "similarity": 0.95
@@ -105,7 +105,7 @@ FaceVoter 投票狀態變化時及每 30 秒心跳時發布。
 ```json
 {
   "agent": "FaceGuard",
-  "timestamp": "2025-12-20T18:30:05.000000Z",
+  "timestamp": "2025-12-20T18:30:05.000000+08:00",
   "vote_result": "UNKNOWN_CONFIRMED"
 }
 ```
@@ -114,7 +114,7 @@ FaceVoter 投票狀態變化時及每 30 秒心跳時發布。
 ```json
 {
   "agent": "FaceGuard",
-  "timestamp": "2025-12-20T18:30:05.000000Z",
+  "timestamp": "2025-12-20T18:30:05.000000+08:00",
   "vote_result": "NONE"
 }
 ```
@@ -122,7 +122,7 @@ FaceVoter 投票狀態變化時及每 30 秒心跳時發布。
 | 欄位 | 型別 | 說明 |
 |------|------|------|
 | `agent` | String | 固定為 `"FaceGuard"` |
-| `timestamp` | String | ISO 8601 UTC 時間 |
+| `timestamp` | String | ISO 8601 本地時間（帶時區 offset，如 `+08:00`） |
 | `vote_result` | String | `"KNOWN_CONFIRMED"` / `"UNKNOWN_CONFIRMED"` / `"NONE"` |
 | `user_name` | String | 僅 `KNOWN_CONFIRMED` 時存在；已知使用者名稱 |
 | `similarity` | Float | 僅 `KNOWN_CONFIRMED` 時存在；Cosine similarity（0.90–1.0） |
@@ -144,7 +144,7 @@ FaceVoter 輸出 `UNKNOWN_CONFIRMED` 時，或 RED alert 確認觸發時發布�
 ```json
 {
   "agent": "FaceGuard",
-  "timestamp": "2025-12-20T18:30:05.000000Z",
+  "timestamp": "2025-12-20T18:30:05.000000+08:00",
   "alert_level": "ALERT_YELLOW",
   "alert_type": "UNKNOWN_CONFIRMED"
 }
@@ -153,7 +153,7 @@ FaceVoter 輸出 `UNKNOWN_CONFIRMED` 時，或 RED alert 確認觸發時發布�
 | 欄位 | 型別 | 說明 |
 |------|------|------|
 | `agent` | String | 固定為 `"FaceGuard"` |
-| `timestamp` | String | ISO 8601 UTC 時間 |
+| `timestamp` | String | ISO 8601 本地時間（帶時區 offset，如 `+08:00`） |
 | `alert_level` | String | `"ALERT_RED"` 或 `"ALERT_YELLOW"` |
 | `alert_type` | String | `"UNKNOWN_CONFIRMED"` |
 
@@ -168,7 +168,7 @@ FaceVoter 輸出 `UNKNOWN_CONFIRMED` 時，或 RED alert 確認觸發時發布�
 ```json
 {
   "agent": "FaceGuard",
-  "timestamp": "2025-12-20T18:30:05.000000Z",
+  "timestamp": "2025-12-20T18:30:05.000000+08:00",
   "alert_level": "ALERT_RED",
   "uptime": 1800000
 }
@@ -177,7 +177,7 @@ FaceVoter 輸出 `UNKNOWN_CONFIRMED` 時，或 RED alert 確認觸發時發布�
 | 欄位 | 型別 | 說明 |
 |------|------|------|
 | `agent` | String | 固定為 `"FaceGuard"` |
-| `timestamp` | String | ISO 8601 UTC 時間 |
+| `timestamp` | String | ISO 8601 本地時間（帶時區 offset，如 `+08:00`） |
 | `alert_level` | String | 當前 AlertLevel |
 | `uptime` | Integer | `millis()` 值（啟動後毫秒數） |
 
@@ -316,13 +316,13 @@ Agent 2 或顯示裝置發布的狀態通知（僅記錄至 Serial，不影響�
 
 ### Timestamp 格式
 
-所有 FaceGuard **publish** 的 `timestamp` 欄位均為 **ISO 8601 UTC 字串**（由 NTP 時間生成）：
+所有 FaceGuard **publish** 的 `timestamp` 欄位均為 **ISO 8601 本地時間字串**（依 WebUI 設定的時區 offset）：
 
 ```json
-"timestamp": "2025-12-20T18:30:05.000000Z"
+"timestamp": "2025-12-20T18:30:05.000000+08:00"
 ```
 
-NTP 未同步時（`time()` 回傳值 < 1700000000），固定輸出：
+NTP 未同步時（`time()` 回傳值 < 1700000000），固定輸出 UTC 零點：
 
 ```json
 "timestamp": "1970-01-01T00:00:00.000000Z"

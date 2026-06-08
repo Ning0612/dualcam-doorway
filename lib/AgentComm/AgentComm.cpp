@@ -114,10 +114,28 @@ static String _getTimestamp() {
     if (now < 1700000000UL) {
         return String("1970-01-01T00:00:00.000000Z");
     }
-    struct tm t;
-    gmtime_r(&now, &t);
-    char buf[28];
-    strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S.000000Z", &t);
+    struct tm lt, gt;
+    localtime_r(&now, &lt);
+    gmtime_r(&now, &gt);
+
+    int offMin = (lt.tm_hour - gt.tm_hour) * 60 + (lt.tm_min - gt.tm_min);
+    int dd = lt.tm_yday - gt.tm_yday;
+    if (dd > 1 || dd < -1) {
+        // Year boundary: use UTC year's day count to correct for leap years.
+        int yr = gt.tm_year + 1900;
+        int diy = ((yr % 4 == 0 && yr % 100 != 0) || yr % 400 == 0) ? 366 : 365;
+        dd += (dd > 0) ? -diy : diy;
+    }
+    offMin += dd * 24 * 60;
+
+    char sign = (offMin >= 0) ? '+' : '-';
+    int absOff = (offMin >= 0) ? offMin : -offMin;
+
+    char buf[33];
+    strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S.000000", &lt);
+    char suffix[8];
+    snprintf(suffix, sizeof(suffix), "%c%02d:%02d", sign, absOff / 60, absOff % 60);
+    strncat(buf, suffix, sizeof(buf) - strlen(buf) - 1);
     return String(buf);
 }
 

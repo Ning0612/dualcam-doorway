@@ -29,8 +29,11 @@ static String _ts() {
 
   int offMin = (lt_s.tm_hour - gt_s.tm_hour) * 60 + (lt_s.tm_min - gt_s.tm_min);
   int dd = lt_s.tm_yday - gt_s.tm_yday;
-  if (dd >  1) dd -= 365;
-  if (dd < -1) dd += 365;
+  if (dd > 1 || dd < -1) {
+    int yr = gt_s.tm_year + 1900;
+    int diy = ((yr % 4 == 0 && yr % 100 != 0) || yr % 400 == 0) ? 366 : 365;
+    dd += (dd > 0) ? -diy : diy;
+  }
   offMin += dd * 24 * 60;
 
   char sign = (offMin >= 0) ? '+' : '-';
