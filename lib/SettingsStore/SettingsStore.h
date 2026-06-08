@@ -30,6 +30,11 @@ public:
   // SHA-256(salt + pw) → 64-char hex string. Public for SessionAuth use.
   static String hashPassword(const String& pw);
 
+  // Timezone offset from UTC in minutes. Range: -720 to +840. Default 480 (UTC+8).
+  static int16_t getTzOffset();
+  static bool    setTzOffset(int16_t offsetMin);   // validates, saves, applies immediately
+  static void    applyTzToSystem(int16_t offsetMin); // builds POSIX TZ string, setenv + tzset
+
 private:
   static bool _isValidDiscordUrl(const String& url);
 };

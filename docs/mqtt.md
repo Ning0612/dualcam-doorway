@@ -88,14 +88,34 @@ Username 為空字串時，連線不帶認證資訊（Anonymous）。Username �
 
 ### `home/security/face`
 
-FaceVoter 輸出 `KNOWN_CONFIRMED` 時發布。
+FaceVoter 投票狀態變化時及每 30 秒心跳時發布。
 
+**KNOWN_CONFIRMED（已知使用者確認）：**
 ```json
 {
   "agent": "FaceGuard",
   "timestamp": "2025-12-20T18:30:05.000000Z",
+  "vote_result": "KNOWN_CONFIRMED",
   "user_name": "Alice",
   "similarity": 0.95
+}
+```
+
+**UNKNOWN_CONFIRMED（未知訪客確認，邊緣事件）：**
+```json
+{
+  "agent": "FaceGuard",
+  "timestamp": "2025-12-20T18:30:05.000000Z",
+  "vote_result": "UNKNOWN_CONFIRMED"
+}
+```
+
+**NONE（投票器閒置或心跳無人臉）：**
+```json
+{
+  "agent": "FaceGuard",
+  "timestamp": "2025-12-20T18:30:05.000000Z",
+  "vote_result": "NONE"
 }
 ```
 
@@ -103,8 +123,19 @@ FaceVoter 輸出 `KNOWN_CONFIRMED` 時發布。
 |------|------|------|
 | `agent` | String | 固定為 `"FaceGuard"` |
 | `timestamp` | String | ISO 8601 UTC 時間 |
-| `user_name` | String | 已知使用者名稱（空字串表示匿名） |
-| `similarity` | Float | Cosine similarity（0.90–1.0） |
+| `vote_result` | String | `"KNOWN_CONFIRMED"` / `"UNKNOWN_CONFIRMED"` / `"NONE"` |
+| `user_name` | String | 僅 `KNOWN_CONFIRMED` 時存在；已知使用者名稱 |
+| `similarity` | Float | 僅 `KNOWN_CONFIRMED` 時存在；Cosine similarity（0.90–1.0） |
+
+**發布時機：**
+
+| 事件 | 觸發條件 |
+|------|---------|
+| 立即發布 | `KNOWN_CONFIRMED` / `UNKNOWN_CONFIRMED` 投票確認時 |
+| 立即發布 | FaceVoter 由 active → idle（投票器歸零），發布 `NONE` |
+| 心跳發布 | 每 30 秒，發布當前 vote_result（含 NONE） |
+
+> **注意**：`UNKNOWN_CONFIRMED` 為邊緣事件，發布後 vote_result 立即回到 `NONE`；後續心跳不會重複發送 `UNKNOWN_CONFIRMED`。`KNOWN_CONFIRMED` 為持續狀態，直到投票器 idle 才轉為 `NONE`。
 
 ### `home/security/alert`
 
@@ -401,7 +432,7 @@ mqtt_comm task (Core 0):
 
 ```
 home/security/door    — 接收門狀態事件
-home/security/face    — 接收已知使用者確認事件
+home/security/face    — 接收 FaceVoter 投票狀態（KNOWN_CONFIRMED / UNKNOWN_CONFIRMED / NONE），每 30s 心跳或狀態變化時發布
 home/security/alert   — 接收未知訪客警報（需在 90s 內回應 alarm_decision）
 home/security/status  — 接收心跳狀態
 home/security/camera  — 接收 Camera 即時畫面（raw JPEG binary，5fps）

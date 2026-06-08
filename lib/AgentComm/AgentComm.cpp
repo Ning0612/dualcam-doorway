@@ -410,11 +410,12 @@ bool AgentComm::publishDoor(DoorState state, const char* relatedUser) {
     return _publish(MQTT_TOPIC_DOOR, payload);
 }
 
-bool AgentComm::publishFace(const char* userName, float similarity) {
+bool AgentComm::publishFace(VoteResult vote, const char* userName, float similarity) {
     JsonDocument doc;
     _appendCommonFields(doc);
-    doc[MSG_USER_NAME]  = userName ? userName : "";
-    doc[MSG_SIMILARITY] = similarity;
+    doc[MSG_VOTE_RESULT] = voteResultToString(vote);
+    if (userName && userName[0]) doc[MSG_USER_NAME] = userName;
+    if (vote == VoteResult::KNOWN_CONFIRMED) doc[MSG_SIMILARITY] = similarity;
     String payload;
     serializeJson(doc, payload);
     return _publish(MQTT_TOPIC_FACE, payload);

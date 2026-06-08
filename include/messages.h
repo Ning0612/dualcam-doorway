@@ -21,6 +21,7 @@
 #define MSG_ALERT_LEVEL     "alert_level"
 #define MSG_USER_NAME       "user_name"
 #define MSG_SIMILARITY      "similarity"
+#define MSG_VOTE_RESULT     "vote_result"
 #define MSG_ALARM_DECISION  "alarm_decision"
 #define MSG_PRESENCE_STATE  "state"
 #define MSG_PRESENCE_SCORE  "score"

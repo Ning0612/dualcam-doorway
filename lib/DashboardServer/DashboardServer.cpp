@@ -10,6 +10,29 @@
 #include "states.h"
 #include <ArduinoJson.h>
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+static String _buildTzOptions(int16_t curOffset) {
+  String opts;
+  for (int m = -720; m <= 840; m += 30) {
+    char sign = (m >= 0) ? '+' : '-';
+    int absM  = (m >= 0) ? m : -m;
+    int h     = absM / 60;
+    int mn    = absM % 60;
+    char label[16];
+    if (mn == 0) snprintf(label, sizeof(label), "UTC%c%d", sign, h);
+    else         snprintf(label, sizeof(label), "UTC%c%d:%02d", sign, h, mn);
+    opts += "<option value='";
+    opts += m;
+    opts += "'";
+    if (m == (int)curOffset) opts += " selected";
+    opts += ">";
+    opts += label;
+    opts += "</option>";
+  }
+  return opts;
+}
+
 // ── HTML templates ────────────────────────────────────────────────────────────
 
 static const char DASHBOARD_HTML[] =
@@ -147,7 +170,7 @@ static const char SETTINGS_HTML[] =
   "<style>body{font-family:sans-serif;max-width:520px;margin:20px auto;padding:20px}"
   "fieldset{border:1px solid #ddd;border-radius:6px;padding:12px;margin:12px 0}"
   "legend{font-weight:bold}"
-  "input{width:100%;padding:8px;margin:6px 0;box-sizing:border-box}"
+  "input,select{width:100%;padding:8px;margin:6px 0;box-sizing:border-box}"
   "button{padding:10px 20px;background:#0070f3;color:#fff;border:none;cursor:pointer}"
   "a{color:#0070f3}.ok{color:green;font-size:.9em}.err{color:red;font-size:.9em}"
   "</style></head><body>"
@@ -192,6 +215,11 @@ static const char SETTINGS_HTML[] =
   "<input type='number' name='buzzer_dur_s' min='10' max='300' value='%BUZZER_DUR_S%'></label>"
   "<button type='button' onclick='tstBz()'>Test</button>"
   "<p style='font-size:.8em;color:#666'>Alarm auto-cancels after duration (buzzer + LED both stop).</p>"
+  "</fieldset>"
+  "<fieldset><legend>Timezone</legend>"
+  "<label>UTC Offset<br>"
+  "<select name='tz_offset'>%TZ_OPTIONS%</select></label>"
+  "<p style='font-size:.8em;color:#666'>Applied immediately without restart. Affects all log timestamps.</p>"
   "</fieldset>"
   "<button>Save</button>"
   "</form>"
@@ -689,6 +717,7 @@ void DashboardServer::begin(WebServer& server,
     page.replace("%HALL_RAW%",    String(DoorSensor::getRaw()));
     page.replace("%BUZZER_FREQ%", String(ConfigManager::getBuzzerFreq()));
     page.replace("%BUZZER_DUR_S%",String(ConfigManager::getBuzzerDurationMs() / 1000));
+    page.replace("%TZ_OPTIONS%",  _buildTzOptions(SettingsStore::getTzOffset()));
     server.send(200, "text/html", page);
   });
 
@@ -790,6 +819,30 @@ void DashboardServer::begin(WebServer& server,
       }
     }
 
+    // Timezone
+    if (server.hasArg("tz_offset")) {
+      String tzArg = server.arg("tz_offset");
+      bool tzNumeric = (tzArg.length() > 0);
+      size_t tzStart = 0;
+      if (tzNumeric && tzArg[0] == '-') tzStart = 1;
+      if (tzStart == tzArg.length()) tzNumeric = false;
+      for (size_t i = tzStart; i < tzArg.length() && tzNumeric; i++) {
+        if (!isdigit((unsigned char)tzArg[i])) tzNumeric = false;
+      }
+      if (!tzNumeric) {
+        msg += "<p class='err'>Invalid timezone offset.</p>";
+      } else {
+        int tzRaw = tzArg.toInt();
+        if (tzRaw < -720 || tzRaw > 840 || tzRaw % 30 != 0) {
+          msg += "<p class='err'>Invalid timezone offset.</p>";
+        } else if (!SettingsStore::setTzOffset((int16_t)tzRaw)) {
+          msg += "<p class='err'>Failed to save timezone.</p>";
+        } else {
+          msg += "<p class='ok'>Timezone saved and applied.</p>";
+        }
+      }
+    }
+
     String page = SETTINGS_HTML;
     page.replace("%MSG%",         msg);
     page.replace("%CSRF%",        SessionAuth::getCsrfToken());
@@ -804,6 +857,7 @@ void DashboardServer::begin(WebServer& server,
     page.replace("%HALL_RAW%",    String(DoorSensor::getRaw()));
     page.replace("%BUZZER_FREQ%", String(ConfigManager::getBuzzerFreq()));
     page.replace("%BUZZER_DUR_S%",String(ConfigManager::getBuzzerDurationMs() / 1000));
+    page.replace("%TZ_OPTIONS%",  _buildTzOptions(SettingsStore::getTzOffset()));
     server.send(200, "text/html", page);
   });
 

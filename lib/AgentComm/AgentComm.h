@@ -27,7 +27,7 @@ public:
 
   // ── Publish ───────────────────────────────────────────────────────────────
   static bool publishDoor(DoorState state, const char* relatedUser = nullptr);
-  static bool publishFace(const char* userName, float similarity);
+  static bool publishFace(VoteResult vote, const char* userName = nullptr, float similarity = 0.0f);
   static bool publishAlert(AlertLevel level, const char* alertType);
   static bool publishStatus(AlertLevel level, unsigned long uptime);
 

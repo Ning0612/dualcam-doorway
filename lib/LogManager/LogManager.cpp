@@ -22,10 +22,25 @@ static String _ts() {
     snprintf(buf, sizeof(buf), "rel:%lu", millis());
     return String(buf);
   }
-  char buf[32];
   time_t now = time(nullptr);
-  struct tm* t = localtime(&now);
-  strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S+08:00", t);
+  struct tm lt_s, gt_s;
+  localtime_r(&now, &lt_s);
+  gmtime_r(&now, &gt_s);
+
+  int offMin = (lt_s.tm_hour - gt_s.tm_hour) * 60 + (lt_s.tm_min - gt_s.tm_min);
+  int dd = lt_s.tm_yday - gt_s.tm_yday;
+  if (dd >  1) dd -= 365;
+  if (dd < -1) dd += 365;
+  offMin += dd * 24 * 60;
+
+  char sign = (offMin >= 0) ? '+' : '-';
+  int absOff = (offMin >= 0) ? offMin : -offMin;
+
+  char buf[32];
+  strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S", &lt_s);
+  char suffix[8];
+  snprintf(suffix, sizeof(suffix), "%c%02d:%02d", sign, absOff / 60, absOff % 60);
+  strncat(buf, suffix, sizeof(buf) - strlen(buf) - 1);
   return String(buf);
 }
 

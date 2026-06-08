@@ -36,16 +36,28 @@ static unsigned long wifiLostMs       = 0;
 static unsigned long lastStatusPubMs  = 0;
 static unsigned long lastCamPubMs     = 0;
 static unsigned long lastDoorPubMs    = 0;
+static unsigned long lastFacePubMs    = 0;
 static constexpr unsigned long STATUS_PUB_INTERVAL_MS = 30000UL;
 static constexpr unsigned long DOOR_PUB_INTERVAL_MS   = 30000UL;
+static constexpr unsigned long FACE_PUB_INTERVAL_MS   = 30000UL;
+
+static VoteResult lastFaceVoteResult  = VoteResult::NONE;
+static char       lastFaceName[17]    = {};
+static float      lastFaceSim         = 0.0f;
+static bool       wasVoterActive      = false;
 
 // ── NTP ───────────────────────────────────────────────────────────────────────
 
 static void syncNtp() {
-  configTime(8 * 3600, 0, "pool.ntp.org", "time.cloudflare.com");
+  int16_t tzMin = SettingsStore::getTzOffset();
+  configTime((long)tzMin * 60L, 0, "pool.ntp.org", "time.cloudflare.com");
   Serial.print("[FaceGuard] NTP sync");
   for (int i = 0; i < 20; i++) {
-    if (time(nullptr) > 1700000000UL) { Serial.println(" OK"); return; }
+    if (time(nullptr) > 1700000000UL) {
+      Serial.println(" OK");
+      SettingsStore::applyTzToSystem(tzMin);
+      return;
+    }
     delay(500);
     Serial.print('.');
   }
@@ -129,8 +141,7 @@ static void onDoorEvent(DoorState state, const char* relatedUser) {
 static void onKnownConfirmed(const char* name, float similarity) {
   Serial.printf("[FaceGuard] face KNOWN_CONFIRMED: %s (sim=%.3f)\n", name, similarity);
   logManager.logFace(FaceState::FACE_KNOWN, VoteResult::KNOWN_CONFIRMED, name, similarity);
-  AgentComm::publishFace(name, similarity);
-
+  // MQTT publish is handled in loop() before sm.onVoteResult() so lastFaceVoteResult is current.
   // LED is handled by updateLed() in loop(); buzzer is silenced by _onBuzzerSilence callback.
 }
 
@@ -237,7 +248,8 @@ static void updateLed() {
 
 static void onDoorChange(DoorState state) {
   Serial.printf("[FaceGuard] door %s\n", doorStateToString(state));
-  sm.onDoorChange(state);
+  sm.onDoorChange(state);    // synchronously fires onDoorEvent → AgentComm::publishDoor
+  lastDoorPubMs = millis();  // reset heartbeat timer so next periodic is 30 s from now
 }
 
 // ── Serial input ──────────────────────────────────────────────────────────────
@@ -303,7 +315,11 @@ static void handleSerialInput() {
     case 'u':
       Serial.println("[FaceGuard] unknown visitor CONFIRMED (manual)");
       faceVoter.setConfirmedName("");
-      AgentComm::publishFace("", 0.0f);
+      AgentComm::publishFace(VoteResult::UNKNOWN_CONFIRMED, nullptr, 0.0f);
+      lastFacePubMs      = millis();
+      lastFaceVoteResult = VoteResult::NONE;
+      lastFaceName[0]    = '\0';
+      lastFaceSim        = 0.0f;
       sm.onVoteResult(VoteResult::UNKNOWN_CONFIRMED);
       break;
     case 'e':
@@ -370,10 +386,9 @@ void setup() {
     Serial.printf("[FaceGuard] mDNS: %s.local\n", MDNS_FACEGUARD);
   }
 
-  syncNtp();
-
   // Settings & config
   SettingsStore::init();
+  syncNtp();
   ConfigManager::begin();
   BuzzerController::setFrequency(ConfigManager::getBuzzerFreq());
   sm.setBuzzerDuration(ConfigManager::getBuzzerDurationMs());
@@ -457,23 +472,42 @@ void loop() {
   FaceResult edge = CameraAgent::tick();
   (void)edge;  // edge-trigger path not used; FaceVoter handles sustained detection
 
+  bool prevActive = wasVoterActive;
   VoteResult vote = faceVoter.update(
     CameraAgent::lastRawResult(),
     CameraAgent::lastRawResultMs(),
     millis()
   );
+  wasVoterActive = faceVoter.isActive();
 
   if (vote == VoteResult::KNOWN_CONFIRMED) {
-    faceVoter.setConfirmedName(FaceRecognizer::getLastMatchName());
-    sm.onVoteResult(VoteResult::KNOWN_CONFIRMED,
-                    FaceRecognizer::getLastMatchName(),
-                    FaceRecognizer::getLastSim());
+    const char* name = FaceRecognizer::getLastMatchName();
+    float       sim  = FaceRecognizer::getLastSim();
+    faceVoter.setConfirmedName(name);
+    strncpy(lastFaceName, name ? name : "", sizeof(lastFaceName) - 1);
+    lastFaceName[sizeof(lastFaceName) - 1] = '\0';
+    lastFaceSim          = sim;
+    lastFaceVoteResult   = VoteResult::KNOWN_CONFIRMED;
+    AgentComm::publishFace(VoteResult::KNOWN_CONFIRMED, name, sim);
+    lastFacePubMs        = millis();
+    sm.onVoteResult(VoteResult::KNOWN_CONFIRMED, name, sim);
   } else if (vote == VoteResult::UNKNOWN_CONFIRMED) {
     Serial.println("[FaceGuard] unknown visitor confirmed by vote window");
     logManager.logFace(FaceState::FACE_UNKNOWN, VoteResult::UNKNOWN_CONFIRMED, "", 0.0f);
     faceVoter.setConfirmedName("");
-    AgentComm::publishFace("", 0.0f);
+    AgentComm::publishFace(VoteResult::UNKNOWN_CONFIRMED, nullptr, 0.0f);
+    lastFacePubMs      = millis();
+    lastFaceVoteResult = VoteResult::NONE;  // edge event; state returns to NONE immediately
+    lastFaceName[0]    = '\0';
+    lastFaceSim        = 0.0f;
     sm.onVoteResult(VoteResult::UNKNOWN_CONFIRMED);
+  } else if (prevActive && !faceVoter.isActive() && lastFaceVoteResult != VoteResult::NONE) {
+    // Voter went idle (no face for FACE_VOTE_IDLE_MS) — announce NONE
+    lastFaceVoteResult = VoteResult::NONE;
+    lastFaceName[0]    = '\0';
+    lastFaceSim        = 0.0f;
+    AgentComm::publishFace(VoteResult::NONE, nullptr, 0.0f);
+    lastFacePubMs      = millis();
   }
 
   // Feed raw KNOWN detections so SecurityStateMachine can attribute door opens
@@ -494,6 +528,14 @@ void loop() {
   if (millis() - lastDoorPubMs >= DOOR_PUB_INTERVAL_MS) {
     AgentComm::publishDoor(sm.getDoorState(), nullptr);
     lastDoorPubMs = millis();
+  }
+
+  // Periodic face vote state heartbeat
+  if (millis() - lastFacePubMs >= FACE_PUB_INTERVAL_MS) {
+    AgentComm::publishFace(lastFaceVoteResult,
+                           lastFaceVoteResult == VoteResult::KNOWN_CONFIRMED ? lastFaceName : nullptr,
+                           lastFaceVoteResult == VoteResult::KNOWN_CONFIRMED ? lastFaceSim  : 0.0f);
+    lastFacePubMs = millis();
   }
 
   // 5 fps MQTT camera snapshot — best-effort, drops frame if MQTT busy or camera unavailable

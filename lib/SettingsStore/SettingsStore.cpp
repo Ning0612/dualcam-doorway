@@ -9,6 +9,7 @@ static const char* PW_CHGD   = "pw_changed";
 static const char* DISC_URL  = "discord_url";
 static const char* HALL_LO_KEY = "hall_lo";
 static const char* HALL_HI_KEY = "hall_hi";
+static const char* TZ_MIN_KEY  = "tz_min";
 static const char* SALT      = "faceguard_s2024";
 
 void SettingsStore::init() {
@@ -137,4 +138,50 @@ bool SettingsStore::setHallBounds(uint16_t lower, uint16_t upper) {
 bool SettingsStore::_isValidDiscordUrl(const String& url) {
   return url.startsWith("https://discord.com/api/webhooks/") ||
          url.startsWith("https://discordapp.com/api/webhooks/");
+}
+
+int16_t SettingsStore::getTzOffset() {
+  Preferences prefs;
+  prefs.begin(NVS_NS, true);
+  int16_t v = (int16_t)prefs.getShort(TZ_MIN_KEY, 480);
+  prefs.end();
+  if (v < -720 || v > 840) v = 480;  // clamp corrupt NVS value to UTC+8 default
+  return v;
+}
+
+bool SettingsStore::setTzOffset(int16_t offsetMin) {
+  if (offsetMin < -720 || offsetMin > 840) return false;
+  Preferences prefs;
+  if (!prefs.begin(NVS_NS, false)) {
+    Serial.println("[SettingsStore] ERROR: NVS begin() failed.");
+    return false;
+  }
+  bool ok = (prefs.putShort(TZ_MIN_KEY, offsetMin) > 0);
+  prefs.end();
+  if (!ok) {
+    Serial.println("[SettingsStore] ERROR: putShort(tz_min) failed.");
+    return false;
+  }
+  applyTzToSystem(offsetMin);
+  return true;
+}
+
+void SettingsStore::applyTzToSystem(int16_t offsetMin) {
+  bool positive = (offsetMin >= 0);
+  int absMin = positive ? (int)offsetMin : -(int)offsetMin;
+  int h = absMin / 60;
+  int m = absMin % 60;
+  char tzName[12], posixOff[12];
+  if (m == 0) {
+    snprintf(tzName,   sizeof(tzName),   "%s%02d",     positive ? "+" : "-", h);
+    snprintf(posixOff, sizeof(posixOff), "%s%d",       positive ? "-" : "",  h);
+  } else {
+    snprintf(tzName,   sizeof(tzName),   "%s%02d%02d", positive ? "+" : "-", h, m);
+    snprintf(posixOff, sizeof(posixOff), "%s%d:%02d",  positive ? "-" : "",  h, m);
+  }
+  char tzStr[32];
+  snprintf(tzStr, sizeof(tzStr), "<%s>%s", tzName, posixOff);
+  setenv("TZ", tzStr, 1);
+  tzset();
+  Serial.printf("[SettingsStore] TZ applied: %s (offset %+d min)\n", tzStr, (int)offsetMin);
 }
