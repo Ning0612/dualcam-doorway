@@ -56,7 +56,7 @@ lib/
   DiscordNotifier/      # HTTPS webhook, TLS, rate limiting
   ConfigPortal/         # AP mode first-boot WiFi provisioning
   ConfigManager/        # MQTT + buzzer NVS settings
-  SettingsStore/        # Password, Discord URL, hall bounds NVS
+  SettingsStore/        # Password, Discord URL, hall bounds, timezone NVS
   SessionAuth/          # Session token, CSRF, brute-force throttle
   DashboardServer/      # HTTP routes, PROGMEM HTML, AJAX API
   LogManager/           # RAM ring buffer + SPIFFS NDJSON logs
@@ -107,7 +107,7 @@ include/
 
 Full route list in `CLAUDE.md` Section 11 and `docs/webui.md`. Key rules:
 - All state-changing POSTs require CSRF token
-- `/settings` is the unified settings page (Discord, MQTT, Hall bounds, Buzzer, Password)
+- `/settings` is the unified settings page (Discord, MQTT, Hall bounds, Timezone, Buzzer, Password)
 - No WiFi settings in WebUI — WiFi only via Config Portal (AP mode)
 - HTML stored in PROGMEM `const char[]`; no LittleFS, no external CDN
 
@@ -122,6 +122,7 @@ Full route list in `CLAUDE.md` Section 11 and `docs/webui.md`. Key rules:
 | `pw_changed` | SettingsStore | Bool |
 | `discord_url` | SettingsStore | max 256 chars |
 | `hall_lo`, `hall_hi` | SettingsStore | UInt32; form fields use `hall_lower`/`hall_upper` |
+| `tz_min` | SettingsStore | Int16; timezone offset in minutes; default 480 (UTC+8); range -720..840; form field `tz_offset` |
 | `mqtt_broker` | ConfigManager | max 63 chars |
 | `mqtt_port` | ConfigManager | UInt16 |
 | `buzzer_freq`, `buzzer_dur` | ConfigManager | UInt32; WebUI inputs in Hz / seconds |

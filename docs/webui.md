@@ -32,7 +32,7 @@
 | `/login` | — | — | 登入表單 |
 | `/logout` | session | — | 登出，清除 session |
 | `/dashboard` | session + 需改密碼 | — | 即時狀態（3s AJAX 輪詢）+ 人臉管理 |
-| `/settings` | session + 需改密碼 | POST 需驗證 | 統一設定頁（Discord、MQTT、霍爾雙邊界、蜂鳴器、密碼） |
+| `/settings` | session + 需改密碼 | POST 需驗證 | 統一設定頁（Discord、MQTT、霍爾雙邊界、時區、蜂鳴器、密碼） |
 | `/settings/save` | session + 需改密碼 | POST 需驗證 | 儲存設定（表單 action） |
 | `/password/change` | session | — | 首次登入強制密碼修改頁 |
 | `/password/save` | session | POST 需驗證 | 儲存新密碼 |
@@ -113,6 +113,7 @@ Set-Cookie: sid=<16-byte-random-hex>; HttpOnly; Path=/; SameSite=Lax
 | MQTT Password | 認證用密碼 | 最多 63 字元；留空不更新；Username 清空時連帶清除 |
 | 霍爾 Open Zone 下界（hall_lower） | ADC open zone 下界 | 0–4095；OPEN 觸發：raw > hall_lower + 150 |
 | 霍爾 Open Zone 上界（hall_upper） | ADC open zone 上界 | 0–4095；OPEN 觸發：raw < hall_upper - 150 |
+| 時區設定（tz_offset） | NTP 及 MQTT timestamp 的 UTC offset | UTC-12:00 至 UTC+14:00 整時或半時；預設 UTC+8；即時生效（不需重啟） |
 | 蜂鳴器頻率（Hz） | 警報音頻率 | 200–8000；預設 2000 |
 | 蜂鳴器持續時間（秒） | 警報蜂鳴持續時間 | 10–300 秒；儲存為 ms；預設 60 |
 | Dashboard 密碼 | 新密碼（需輸入兩次） | 8–64 字元 ASCII printable（不可全為空格）；空白不更新 |

@@ -29,7 +29,7 @@
 ```
 main.cpp
   ├── ConfigPortal        (WiFi 首次設定)
-  ├── SettingsStore       (密碼、Discord URL、霍爾閾值)
+  ├── SettingsStore       (密碼、Discord URL、霍爾閾值、時區)
   ├── ConfigManager       (MQTT 設定)
   ├── SessionAuth         ──► WebServer
   ├── DashboardServer     ──► WebServer, SecurityStateMachine, FaceVoter, LogManager
@@ -89,17 +89,25 @@ loop() 每次迭代：
 9. 若 lastRawResult == FACE_KNOWN（raw，且 lastRawResultMs < 2×CAMERA_DETECT_INTERVAL_MS）：
    sm.onFaceKnownRaw(name)    更新 _lastSeenKnownName（門歸因 fallback 用）
 
-10. 每 30s：AgentComm::publishStatus(alertLevel, uptime)
+10. 每 30s（STATUS_PUB_INTERVAL_MS）：AgentComm::publishStatus(alertLevel, uptime)
 
-11. 每 200ms（CAMERA_PUB_INTERVAL_MS）：
+11. 每 30s（DOOR_PUB_INTERVAL_MS）：
+    AgentComm::publishDoor(doorState, nullptr)  ← door 心跳（無使用者歸因）
+    （狀態轉換時 onDoorChange 重置計時器，30s 後才再發心跳）
+
+12. 每 30s（FACE_PUB_INTERVAL_MS）：
+    AgentComm::publishFace(lastFaceVoteResult, …) ← face 狀態心跳
+    （KNOWN_CONFIRMED / UNKNOWN_CONFIRMED / NONE；即時事件後計時器同步重置）
+
+13. 每 200ms（CAMERA_PUB_INTERVAL_MS）：
     AgentComm::publishCamera(jpegBuf, jpegLen)  ← 僅在 MQTT 已連線且 Camera 就緒時執行
 
-12. sm.tick()                   決策逾時處理（Yellow alert decision timeout，90s）
+14. sm.tick()                   決策逾時處理（Yellow alert decision timeout，90s）
 
-13. updateLed()                 LED 優先級合成（alarm > GREEN > face detected > off）
+15. updateLed()                 LED 優先級合成（alarm > GREEN > face detected > off）
 
-14. handleWifiLoss()            WiFi 斷線監控
-15. handleSerialInput()         Serial 指令處理
+16. handleWifiLoss()            WiFi 斷線監控
+17. handleSerialInput()         Serial 指令處理
 ```
 
 ---
@@ -126,6 +134,7 @@ loop() 每次迭代：
 | `discord_url` | String | Discord Webhook URL |
 | `hall_lo` | UInt32 | 霍爾感應器 open zone 下界；預設 1000 |
 | `hall_hi` | UInt32 | 霍爾感應器 open zone 上界；預設 3000 |
+| `tz_min` | Int16 | 時區偏移（分鐘；-720..840；預設 480 = UTC+8）；NTP configTime 與 MQTT timestamp offset 均使用此值 |
 
 ### ConfigManager
 

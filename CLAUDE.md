@@ -148,7 +148,7 @@ enum class AlertEvent  { UNKNOWN_VISITOR = 0, USER_RETURNED = 1, BOOT = 2 };
 | DiscordNotifier | HTTPS webhook、TLS、rate limit | 阻塞主流程 |
 | ConfigPortal | AP mode、WiFi 首次設定 | 其他設定 |
 | ConfigManager | MQTT + 蜂鳴器 NVS 讀寫 | WiFi 設定 |
-| SettingsStore | dashboard_pw、discord_url、hall_lo/hi NVS 讀寫 | WiFi 設定 |
+| SettingsStore | dashboard_pw、discord_url、hall_lo/hi、tz_min NVS 讀寫 | WiFi 設定 |
 | DashboardServer | HTTP routes、PROGMEM HTML | 核心決策邏輯 |
 | LogManager | RAM ring buffer + SPIFFS NDJSON | 警戒決策 |
 
@@ -163,6 +163,7 @@ enum class AlertEvent  { UNKNOWN_VISITOR = 0, USER_RETURNED = 1, BOOT = 2 };
 | `pw_changed` | SettingsStore | Bool | 首次改密旗標 |
 | `discord_url` | SettingsStore | String | max 256 chars |
 | `hall_lo` / `hall_hi` | SettingsStore | UInt32 | open zone 邊界；form field 名為 `hall_lower`/`hall_upper` |
+| `tz_min` | SettingsStore | Int16 | 時區偏移（分鐘；-720..840；預設 480 = UTC+8）；NTP configTime 與 timestamp offset 均使用此值 |
 | `mqtt_broker` | ConfigManager | String | max 63 chars |
 | `mqtt_port` | ConfigManager | UInt16 | default 1883 |
 | `mqtt_user` | ConfigManager | String | max 63 chars；空 = 無認證 |

@@ -68,8 +68,9 @@ Username 為空字串時，連線不帶認證資訊（Anonymous）。Username �
 
 ### `home/security/door`
 
-門狀態發生確認轉換時發布。
+門狀態轉換時立即發布；另每 30 秒心跳發布一次（`DOOR_PUB_INTERVAL_MS`）。
 
+**狀態轉換（含使用者歸因）：**
 ```json
 {
   "agent": "FaceGuard",
@@ -79,12 +80,30 @@ Username 為空字串時，連線不帶認證資訊（Anonymous）。Username �
 }
 ```
 
+**心跳（固定無 `user_name`）：**
+```json
+{
+  "agent": "FaceGuard",
+  "timestamp": "2025-12-20T18:30:35.000000+08:00",
+  "door_state": "DOOR_OPEN"
+}
+```
+
 | 欄位 | 型別 | 說明 |
 |------|------|------|
 | `agent` | String | 固定為 `"FaceGuard"` |
 | `timestamp` | String | ISO 8601 本地時間（帶時區 offset，如 `+08:00`；NTP 未同步時為 `"1970-01-01T00:00:00.000000Z"`） |
 | `door_state` | String | `"DOOR_OPEN"` 或 `"DOOR_CLOSED"` |
-| `user_name` | String | 若門開啟前有已知使用者確認（KNOWN_CONFIRMED 窗口內，或最近 raw KNOWN 在 ~1.5s 內），填入使用者名稱；否則省略此欄位 |
+| `user_name` | String | 僅狀態轉換時可能存在；若門開啟前有已知使用者確認（KNOWN_CONFIRMED 窗口內，或最近 raw KNOWN 在 ~1.5s 內），填入使用者名稱；心跳發布時固定省略 |
+
+**發布時機：**
+
+| 事件 | 觸發條件 |
+|------|---------|
+| 立即發布 | 門狀態確認轉換（`DOOR_OPEN` ↔ `DOOR_CLOSED`）；可含 `user_name` |
+| 心跳發布 | 每 30 秒（`DOOR_PUB_INTERVAL_MS`）；固定無 `user_name`；狀態轉換後計時器重置，30s 後才再發心跳 |
+
+> **注意**：心跳的主要用途是允許 Agent 2 在 MQTT 重連後恢復最新的門狀態，無需等待下一次狀態轉換。
 
 ### `home/security/face`
 
@@ -431,7 +450,7 @@ mqtt_comm task (Core 0):
 ### Agent 2 必須 Subscribe
 
 ```
-home/security/door    — 接收門狀態事件
+home/security/door    — 接收門狀態事件（狀態轉換時立即發布；另每 30s 心跳，無 user_name）
 home/security/face    — 接收 FaceVoter 投票狀態（KNOWN_CONFIRMED / UNKNOWN_CONFIRMED / NONE），每 30s 心跳或狀態變化時發布
 home/security/alert   — 接收未知訪客警報（需在 90s 內回應 alarm_decision）
 home/security/status  — 接收心跳狀態

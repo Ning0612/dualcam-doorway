@@ -22,6 +22,7 @@
 | 蜂鳴器頻率/持續時間 | WebUI `/settings` | 警報聲音調整 |
 | Dashboard 密碼 | WebUI `/settings` | 修改登入密碼 |
 | 霍爾感應器開閉區間 | WebUI `/settings` | 門磁感應器 lower/upper bounds |
+| 時區設定 | WebUI `/settings` | NTP 同步與 MQTT timestamp 使用的 UTC offset |
 | FaceVoter / 計時常數 | `include/config.h` 重新編譯 | 需燒錄新韌體 |
 | 人臉辨識閾值 | `include/config.h` 重新編譯 | similarity / margin / texture |
 
@@ -74,6 +75,7 @@
 | `discord_url` | SettingsStore | String | Discord Webhook URL | 空 |
 | `hall_lo` | SettingsStore | UInt32 | 霍爾感應器 open zone 下界 | 1000 |
 | `hall_hi` | SettingsStore | UInt32 | 霍爾感應器 open zone 上界 | 3000 |
+| `tz_min` | SettingsStore | Int16 | 時區偏移（分鐘）；NTP configTime 與 MQTT timestamp offset 均使用此值 | 480（UTC+8）|
 | `mqtt_broker` | ConfigManager | String | MQTT Broker IP/hostname | 空 |
 | `mqtt_port` | ConfigManager | UInt16 | MQTT Broker port | 1883 |
 | `mqtt_user` | ConfigManager | String | MQTT 認證 Username（空 = 無認證） | 空 |
@@ -103,6 +105,7 @@
 | MQTT Password | `mqtt_pw` | 最多 63 字元；留空不更新；Username 清空時連帶清除 |
 | 霍爾感應器下界 | `hall_lo` | open zone 下界（ADC 0–4095）；預設 1000 |
 | 霍爾感應器上界 | `hall_hi` | open zone 上界（ADC 0–4095）；預設 3000 |
+| 時區設定 | `tz_min` | UTC offset（分鐘；-720..840）；WebUI form field 為 `tz_offset`（下拉選單）；預設 480（UTC+8）；即時生效，不需重啟 |
 | 蜂鳴器頻率 | `buzzer_freq` | 200–8000 Hz；WebUI 輸入 Hz，直接存 NVS |
 | 蜂鳴器持續時間 | `buzzer_dur` | WebUI 輸入秒（10–300 s），存 NVS 時轉為毫秒 |
 | Dashboard 密碼 | `dashboard_pw` | 新密碼（需輸入兩次確認；8–64 字元 ASCII printable，不可全空格） |
@@ -238,6 +241,7 @@ NVS 資料目前無自動備份機制。若需保留設定（例如韌體更新�
 - MQTT Broker IP 與 Port
 - Discord Webhook URL
 - 霍爾感應器 hall_lo / hall_hi
+- 時區設定（tz_min，預設 480 = UTC+8）
 - 蜂鳴器頻率 / 持續時間
 - Dashboard 密碼（記錄明文，重新設定）
 - 人臉特徵無法匯出（需重新註冊）
