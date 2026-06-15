@@ -44,7 +44,7 @@ pip install platformio
 ## Clone 專案
 
 ```bash
-git clone <repository-url> faceguard
+git clone https://github.com/Ning0612/esp32-faceguard faceguard
 cd faceguard
 ```
 
