@@ -1,6 +1,17 @@
 # FaceGuard：ESP32 智慧門口警戒保全系統
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![PlatformIO](https://img.shields.io/badge/PlatformIO-ESP32-orange?logo=platformio&logoColor=white)](https://platformio.org/)
+[![Arduino](https://img.shields.io/badge/Framework-Arduino-00979D?logo=arduino&logoColor=white)](https://www.arduino.cc/)
+[![C++](https://img.shields.io/badge/Language-C%2B%2B-blue?logo=cplusplus&logoColor=white)](https://isocpp.org/)
+[![ESP32](https://img.shields.io/badge/MCU-ESP32--NMK99-E7352C?logo=espressif&logoColor=white)](https://www.espressif.com/)
+[![MQTT](https://img.shields.io/badge/Protocol-MQTT-660066)](https://mqtt.org/)
+[![Discord](https://img.shields.io/badge/Notification-Discord%20Webhook-5865F2?logo=discord&logoColor=white)](https://discord.com/)
+
 ESP32 NMK99 + OV2640 Camera 實現的可獨立運作門口監控系統。整合人臉辨識、霍爾感應器門禁、RGB LED 警戒狀態、蜂鳴器警示、Discord Webhook 通知，以及本機 WebUI 管理介面。
+
+> 📚 **課程**：114.2 EE5325701 物聯網系統應用與設計實務（Design and Application in Internet of Things）  
+> 👤 **學生**：B11115024 王政甯
 
 ## 功能概覽
 
@@ -40,6 +51,9 @@ ESP32 NMK99 + OV2640 Camera 實現的可獨立運作門口監控系統。整合�
 # 開啟串列監視器
 & "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" device monitor --port COM3
 ```
+
+> **安全提醒**：`platformio.ini` 預設啟用 `DISCORD_TLS_INSECURE`（停用 TLS 憑證驗證），**僅限開發與測試環境使用**。  
+> 生產部署前請移除 `-D DISCORD_TLS_INSECURE`，改用 `-D DISCORD_ROOT_CA_CERT="..."` 設定 Discord 根憑證，詳見 [部署說明](docs/deployment.md)。
 
 ### 3. 首次設定
 
@@ -95,6 +109,20 @@ faceguard/
 └── docs/                     # 完整文件
 ```
 
+## 第三方程式庫
+
+以下為 `lib_deps`（應用層）相依程式庫（版本為 `platformio.ini` 中的 semver constraint）：
+
+| 程式庫 | 版本 | 授權 | 說明 |
+|--------|------|------|------|
+| [ArduinoJson](https://arduinojson.org/) | ^7 | MIT | JSON 序列化／反序列化 |
+| [PubSubClient](https://github.com/knolleary/pubsubclient) | ^2.8 | MIT | MQTT 客戶端 |
+| [Adafruit NeoPixel](https://github.com/adafruit/Adafruit_NeoPixel) | ^1.12 | LGPL-3.0-or-later | WS2812B 可定址 LED 驅動 |
+
+框架層依賴（[Arduino ESP32 Core](https://github.com/espressif/arduino-esp32)、ESP-IDF、OV2640 Camera driver 等）各自依其上游授權（Apache-2.0、LGPL-2.1-or-later 等）。發佈韌體 binary 時請確認已滿足 LGPL 之原始碼告知義務。
+
 ## 授權
 
-MIT License
+MIT License — 詳見 [LICENSE](LICENSE)
+
+Copyright (c) 2026 王政甯（B11115024）

@@ -53,7 +53,7 @@
 // Minimum mean L1 gradient per pixel (HOG-lite texture score).
 // Observed: real face ≈ 17–27, non-face false-positive ≈ 5–10, blank wall < 1.
 // Threshold at 12 cleanly separates non-face noise from actual face texture.
-#define FACE_TEXTURE_MIN_STDDEV   12.0f
+#define FACE_TEXTURE_MIN_STDDEV   10.0f
 
 // Discord Notifier
 #define DISCORD_RATE_LIMIT_MS    30000UL    // min interval between same-event alerts

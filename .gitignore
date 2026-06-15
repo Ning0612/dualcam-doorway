@@ -1,6 +1,28 @@
+# PlatformIO build output
 .pio
+
+# IDE / editor
 .vscode/
-.claude/
 .clangd
+
+# Claude Code working files
+.claude/
+
+# Build artifacts
 .cache/
 compile_commands.json
+
+# Firmware binaries & map files (avoid committing compiled artifacts)
+*.bin
+*.elf
+*.map
+
+# Credentials & secrets (防止敏感資訊誤入版控)
+.env
+.env.*
+secrets.h
+credentials.h
+*.pem
+*.key
+*.crt
+*.p12

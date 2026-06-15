@@ -184,7 +184,7 @@ enum class AlertEvent  { UNKNOWN_VISITOR = 0, USER_RETURNED = 1, BOOT = 2 };
 |------|-----|------|
 | `FACE_SIMILARITY_THRESHOLD` | 0.90 | cosine similarity 門檻 |
 | `FACE_MARGIN_MIN` | 0.03 | 防誤認分差 |
-| `FACE_TEXTURE_MIN_STDDEV` | 12.0 | mean L1 gradient 最低值 |
+| `FACE_TEXTURE_MIN_STDDEV` | 10.0 | mean L1 gradient 最低值 |
 | `FACE_VOTE_KNOWN_MIN` | 3 | KNOWN_CONFIRMED 最少 hits |
 | `FACE_VOTE_KNOWN_WINDOW_MS` | 8000 | KNOWN 累積窗口 |
 | `FACE_VOTE_WINDOW_MS` | 10000 | UNKNOWN sliding window 大小（最舊 hit 不得超過此值） |

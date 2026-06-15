@@ -120,8 +120,8 @@ bool CameraAgent::begin() {
 // Detection region: central 60% of frame to reduce background noise.
 // Threshold: >= SKIN_PIXEL_THRESHOLD skin pixels in that region.
 
-// Balanced threshold: lower than 1500 to avoid missing small/distant faces.
-#define SKIN_PIXEL_THRESHOLD  1200
+// Balanced threshold: lower than 4000 to avoid missing small/distant faces.
+#define SKIN_PIXEL_THRESHOLD  4000
 
 // Kovac YCbCr thresholds + luminance gate.
 // Y < 60: too dark (shadow); Y > 235: overexposed (white ceiling under bright light).
