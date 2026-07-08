@@ -7,6 +7,7 @@
 [![ESP32](https://img.shields.io/badge/MCU-ESP32--NMK99-E7352C?logo=espressif&logoColor=white)](https://www.espressif.com/)
 [![MQTT](https://img.shields.io/badge/Protocol-MQTT-660066)](https://mqtt.org/)
 [![Discord](https://img.shields.io/badge/Notification-Discord%20Webhook-5865F2?logo=discord&logoColor=white)](https://discord.com/)
+[![CI](https://github.com/Ning0612/esp32-faceguard/actions/workflows/ci.yml/badge.svg)](https://github.com/Ning0612/esp32-faceguard/actions/workflows/ci.yml)
 
 ESP32 NMK99 + OV2640 Camera 實現的可獨立運作門口監控系統。整合人臉辨識、霍爾感應器門禁、RGB LED 警戒狀態、蜂鳴器警示、Discord Webhook 通知，以及本機 WebUI 管理介面。
 
