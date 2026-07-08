@@ -52,6 +52,17 @@ cd faceguard
 
 ## 建置（Build）
 
+### CI
+
+GitHub Actions 會在 push、pull request 與手動 workflow dispatch 時執行
+`.github/workflows/ci.yml`：
+
+- 安裝 PlatformIO
+- 執行 `pio run -e faceguard`
+
+CI 只驗證韌體可建置，不會燒錄裝置、啟動相機、連接 MQTT/Discord，
+也不會進行人臉辨識準確率量測。
+
 ### Windows（PowerShell）
 
 ```powershell
