@@ -20,11 +20,17 @@ ESP32 NMK99 + OV2640 Camera 實現的可獨立運作門口監控系統。整合�
 
 ## 實體照片
 
-![FaceGuard real setup](docs/demo/real_setup.jpg)
+<p align="center">
+  <img src="docs/demo/real_setup.jpg" alt="FaceGuard real setup" width="720">
+</p>
 
 ## Demo 片段
 
-![FaceGuard demo preview](docs/demo/demo-preview.gif)
+<p align="center">
+  <img src="docs/demo/demo-preview.gif" alt="FaceGuard demo preview" width="560">
+</p>
+
+完整 demo 影片：
 
 - [已知人臉 - 開門 / 回家紀錄](docs/demo/known-face-home-record.mp4)
 - [未知人臉 - 發警報](docs/demo/unknown-face-alert.mp4)
