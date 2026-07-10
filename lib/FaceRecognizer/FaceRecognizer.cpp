@@ -51,7 +51,7 @@ float FaceRecognizer::_extract(camera_fb_t* fb, float* out) {
 
   float totalEnergy = 0.f;
   int   totalPix    = 0;
-  int   activeCells = 0;  // cells with mean gradient per pixel > 0.5 (Codex finding #2)
+  int   activeCells = 0;  // cells with mean gradient per pixel > 0.5
 
   for (int cr = 0; cr < 4; cr++) {
     for (int cc = 0; cc < 4; cc++) {
