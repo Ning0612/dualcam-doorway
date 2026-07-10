@@ -14,6 +14,10 @@ ESP32 NMK99 + OV2640 Camera 實現的可獨立運作門口監控系統。整合�
 > 📚 **課程**：114.2 EE5325701 物聯網系統應用與設計實務（Design and Application in Internet of Things）  
 > 👤 **學生**：B11115024 王政甯
 
+## 專案狀態
+
+本專案是 114.2 臺科 EE5325701「物聯網系統應用與設計實務」期末專案的整理版。課程展示與公開整理已完成，後續不再持續維護。
+
 ## 實體照片
 
 ![FaceGuard real setup](docs/demo/real_setup.jpg)
