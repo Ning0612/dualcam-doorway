@@ -12,11 +12,13 @@
 ESP32 NMK99 + OV2640 Camera 實現的可獨立運作門口監控系統。整合人臉辨識、霍爾感應器門禁、RGB LED 警戒狀態、蜂鳴器警示、Discord Webhook 通知，以及本機 WebUI 管理介面。
 
 > 📚 **課程**：114.2 EE5325701 物聯網系統應用與設計實務（Design and Application in Internet of Things）  
-> 👤 **學生**：B11115024 王政甯
+> 👤 **作者**：王政甯
 
 ## 專案狀態
 
 本專案是 114.2 臺科 EE5325701「物聯網系統應用與設計實務」期末專案的整理版。課程展示與公開整理已完成，後續不再持續維護。
+
+> 人臉模組是資源受限 MCU 上的可解釋演算法設計展示，未建立正式評測集或進行準確率量測；不應將其表述為可靠辨識或 production-ready 功能。
 
 ## 實體照片
 
@@ -150,4 +152,4 @@ faceguard/
 
 MIT License — 詳見 [LICENSE](LICENSE)
 
-Copyright (c) 2026 王政甯（B11115024）
+Copyright (c) 2026 王政甯
